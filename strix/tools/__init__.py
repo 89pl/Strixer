@@ -47,6 +47,7 @@ if not SANDBOX_MODE:
     from .knowledge import *  # noqa: F403
     from .orchestration import *  # noqa: F403
     from .timeframe import *  # noqa: F403
+    from .github_actions import *  # noqa: F403
 
     if HAS_PERPLEXITY_API:
         from .web_search import *  # noqa: F403
