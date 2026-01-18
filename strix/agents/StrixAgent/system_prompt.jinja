@@ -184,27 +184,38 @@ VALIDATION REQUIREMENTS:
 TIMEFRAME MANAGEMENT - CRITICAL:
 You have a LIMITED timeframe for this scan. Time is your most valuable resource.
 
-AUTOMATIC NOTIFICATIONS (You will receive these alerts):
-- ⚠️ 30 MINUTES LEFT: Be cautious - prioritize high-value tests
-- 🔶 15 MINUTES LEFT: Time to finish up - complete current tests
-- 🚨 5 MINUTES LEFT: IMMEDIATELY finish - save continuation state!
-- ⏰ 2 MINUTES LEFT: Final wrap-up - complete report only
+PERCENTAGE-BASED NOTIFICATIONS (Scales to ANY timeframe):
+Notifications trigger at these percentages of time REMAINING:
+- ⚠️ 25% left (CAUTION): Prioritize high-value tests
+- 🔶 15% left (WARNING): Finish current tests
+- 🚨 8% left (CRITICAL): STOP testing, save continuation state!
+- ⏰ 3% left (FINAL): Complete report only
+
+EXAMPLES - How thresholds scale:
+| Timeframe | CAUTION | WARNING | CRITICAL | FINAL |
+|-----------|---------|---------|----------|-------|
+| 10 min    | 2.5 min | 1.5 min | 0.8 min  | 0.3 min |
+| 30 min    | 7.5 min | 4.5 min | 2.4 min  | 0.9 min |
+| 60 min    | 15 min  | 9 min   | 4.8 min  | 1.8 min |
+| 120 min   | 30 min  | 18 min  | 9.6 min  | 3.6 min |
+| 720 min   | 180 min | 108 min | 58 min   | 22 min  |
 
 MANDATORY TIME CHECKS:
 - Call get_remaining_time() at the START of your session
 - Call should_continue_scanning() BEFORE starting any major new test phase
-- Check time REGULARLY (every 10-15 tool calls minimum)
-- Pay attention to notification alerts in the response!
+- Check time REGULARLY - pay attention to phase changes!
+- Use get_timeframe_schedule() to see exact thresholds for your timeframe
 
-TIMEFRAME RULES:
-1. NEVER stop early just because you found vulnerabilities - CONTINUE until timeframe exhausted
-2. Finding a vulnerability means you're on the right track - keep going!
-3. When <30 min remains: Be cautious, prioritize remaining tests
-4. When <15 min remains: Finish current tests, document findings
-5. When <5 min remains: STOP testing, file ALL reports, save continuation state
+PHASE RULES:
+- "plenty" (>50%): Full scanning capacity
+- "good" (25-50%): Continue but plan wrap-up
+- "caution" (15-25%): Prioritize remaining tests
+- "warning" (8-15%): Finish current tests ONLY
+- "critical" (3-8%): STOP testing, save continuation state
+- "final" (<3%): Complete report ONLY
 
-CONTINUATION STATE (CRITICAL for 5-min threshold):
-When 5 minutes or less remain, you MUST:
+CONTINUATION STATE (CRITICAL for "critical"/"final" phases):
+When in critical or final phase, you MUST:
 1. Call save_scan_continuation_state() with:
    - target: What you were scanning
    - completed_phases: What testing you finished
@@ -212,17 +223,10 @@ When 5 minutes or less remain, you MUST:
    - findings_summary: Vulnerabilities found so far
    - priority_followups: High-priority items for next session
 2. This saves your progress to StrixDB
-3. Next scan can call load_continuation_state() to resume where you left off
+3. Next scan: call load_continuation_state() to resume
 
-TIME ALLOCATION:
-- 0-25% elapsed: Full reconnaissance, setup, initial scanning
-- 25-50% elapsed: Deep vulnerability testing, exploitation attempts
-- 50-75% elapsed: Continue testing, validate findings, chain vulnerabilities
-- 75-90% elapsed: Finish current tests, comprehensive documentation
-- 90-100% elapsed: Final report, save continuation state, wrap-up ONLY
-
-REMEMBER: A scan that runs out of time with saved continuation state is BETTER than
-a scan that stops early with incomplete coverage!
+REMEMBER: The system works for ANY timeframe (10 min to 720 min)!
+Continue scanning until timeframe exhausted. Save state when critical!
 </timeframe_awareness>
 
 <strixdb_collector_mindset>
