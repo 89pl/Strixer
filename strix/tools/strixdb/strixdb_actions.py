@@ -44,6 +44,7 @@ DEFAULT_CATEGORIES = [
     "templates",
     "notes",
     "reports",  # Software error reports and bug tracking
+    "workflows",  # General-purpose GitHub Actions workflows
 ]
 
 # Category descriptions for documentation
@@ -61,6 +62,7 @@ CATEGORY_DESCRIPTIONS = {
     "templates": "Report templates, code templates, and boilerplates",
     "notes": "Quick notes and temporary findings",
     "reports": "Software error reports, bugs, and issue tracking for Strix itself",
+    "workflows": "General-purpose GitHub Actions workflows for scanning, hosting, validation, and automation",
 }
 
 # Runtime storage for dynamically created categories

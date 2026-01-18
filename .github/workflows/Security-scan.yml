@@ -53,6 +53,14 @@ on:
           - 'qwen3-coder-flash'
           - 'qwen3-max'
           - 'qwen-plus'
+      reencrypt_tokens:
+        description: 'Re-encrypt and update QWEN_TOKENS after scan'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
   pull_request:
 
 concurrency:
@@ -102,35 +110,26 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Decrypting Qwen tokens"
-          
           if [ -z "${{ secrets.QWEN_TOKENS }}" ]; then
             echo "::error::QWEN_TOKENS secret is not set"
             exit 1
           fi
-          
           mkdir -p ~/.cli-proxy-api
           cd ~/.cli-proxy-api
-          
           echo "${{ secrets.QWEN_TOKENS }}" | base64 -d > qwen-tokens.enc
-          
           if ! echo "${{ github.event.inputs.decryption_password }}" | openssl enc -aes-256-cbc -d -salt -pbkdf2 -in qwen-tokens.enc -out qwen-tokens.tar.gz -pass stdin 2>/dev/null; then
             echo "::error::Failed to decrypt tokens"
             exit 1
           fi
-          
           tar -xzf qwen-tokens.tar.gz
-          
           for dir in account-*/; do
             [ -d "$dir" ] && mv "$dir"qwen-*.json . 2>/dev/null || true
           done
-          
           TOKEN_COUNT=$(find . -maxdepth 1 -name 'qwen-*.json' | wc -l)
-          
           if [ "$TOKEN_COUNT" -eq 0 ]; then
             echo "::error::No token files found"
             exit 1
           fi
-          
           echo "Decrypted $TOKEN_COUNT account(s)"
           echo "token_count=$TOKEN_COUNT" >> "$GITHUB_OUTPUT"
           rm -f qwen-tokens.enc qwen-tokens.tar.gz
@@ -157,7 +156,6 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh -s -- -b /usr/local/bin 2>/dev/null || true
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar xz -C /usr/local/bin gitleaks 2>/dev/null || true
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin 2>/dev/null || true
-          curl -sSfL https://github.com/aquasecurity/tfsec/releases/download/v1.28.4/tfsec-linux-amd64 -o /usr/local/bin/tfsec && chmod +x /usr/local/bin/tfsec 2>/dev/null || true
           gem install brakeman --no-document 2>/dev/null || true
           npm install -g snyk 2>/dev/null || true
           echo "SAST tools installed"
@@ -173,31 +171,21 @@ jobs:
           curl -sSfL https://github.com/ffuf/ffuf/releases/download/v2.1.0/ffuf_2.1.0_linux_amd64.tar.gz | tar xz -C /usr/local/bin ffuf 2>/dev/null || true
           curl -sSfL https://github.com/projectdiscovery/httpx/releases/download/v1.6.3/httpx_1.6.3_linux_amd64.zip -o /tmp/httpx.zip && unzip -q /tmp/httpx.zip -d /usr/local/bin 2>/dev/null || true
           curl -sSfL https://github.com/projectdiscovery/subfinder/releases/download/v2.6.6/subfinder_2.6.6_linux_amd64.zip -o /tmp/subfinder.zip && unzip -q /tmp/subfinder.zip -d /usr/local/bin 2>/dev/null || true
-          curl -sSfL https://github.com/projectdiscovery/katana/releases/download/v1.1.0/katana_1.1.0_linux_amd64.zip -o /tmp/katana.zip && unzip -q /tmp/katana.zip -d /usr/local/bin 2>/dev/null || true
-          curl -sSfL https://github.com/OJ/gobuster/releases/download/v3.6.0/gobuster_Linux_x86_64.tar.gz | tar xz -C /usr/local/bin gobuster 2>/dev/null || true
-          curl -sSfL https://github.com/epi052/feroxbuster/releases/download/v2.10.4/x86_64-linux-feroxbuster.tar.gz | tar xz -C /usr/local/bin feroxbuster 2>/dev/null || true
-          pip install sqlmap dirsearch arjun paramspider 2>/dev/null || true
+          pip install sqlmap dirsearch arjun 2>/dev/null || true
           curl -sSfL https://github.com/hahwul/dalfox/releases/download/v2.9.3/dalfox_2.9.3_linux_amd64.tar.gz | tar xz -C /usr/local/bin dalfox 2>/dev/null || true
-          gem install wpscan --no-document 2>/dev/null || true
-          curl -sSfL https://github.com/owasp-amass/amass/releases/download/v4.2.0/amass_Linux_amd64.zip -o /tmp/amass.zip && unzip -q /tmp/amass.zip -d /tmp/amass && mv /tmp/amass/amass_Linux_amd64/amass /usr/local/bin/ 2>/dev/null || true
-          go install github.com/tomnomnom/waybackurls@latest 2>/dev/null || true
-          go install github.com/lc/gau/v2/cmd/gau@latest 2>/dev/null || true
-          go install github.com/hakluke/hakrawler@latest 2>/dev/null || true
           echo "$HOME/go/bin" >> $GITHUB_PATH
-          mkdir -p /usr/share/wordlists
-          curl -sSfL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt -o /usr/share/wordlists/common.txt 2>/dev/null || true
           echo "DAST tools installed"
           echo "::endgroup::"
 
       - name: Verify Tools
         run: |
-          echo "=== SAST ===" && semgrep --version 2>/dev/null || true && bandit --version 2>/dev/null || true && trivy --version 2>/dev/null || true
-          echo "=== DAST ===" && nuclei -version 2>/dev/null || true && ffuf -V 2>/dev/null || true && nmap --version 2>/dev/null | head -1
+          echo "=== SAST ===" && semgrep --version 2>/dev/null || true && bandit --version 2>/dev/null || true
+          echo "=== DAST ===" && nuclei -version 2>/dev/null || true && nmap --version 2>/dev/null | head -1
 
       - name: Configure CLIProxyAPI
         run: |
           AUTH_DIR="$HOME/.cli-proxy-api"
-          cat > "$AUTH_DIR/config.yaml" << 'EOF'
+          cat > "$AUTH_DIR/config.yaml" << 'CONFIGEOF'
           host: "127.0.0.1"
           port: 8317
           auth-dir: "~/.cli-proxy-api"
@@ -205,7 +193,7 @@ jobs:
           request-retry: 5
           routing:
             strategy: "round-robin"
-          EOF
+          CONFIGEOF
           sed -i 's/^          //' "$AUTH_DIR/config.yaml"
 
       - name: Start CLIProxyAPI Server
@@ -252,23 +240,16 @@ jobs:
           TIMEFRAME="${{ github.event.inputs.timeframe || '60' }}"
           SCAN_MODE="${{ github.event.inputs.scan_mode || 'deep' }}"
           export STRIX_SCAN_START_TIME=$(date +%s)
-          
           USER_PROMPT="${{ github.event.inputs.prompt }}"
-          EXTRA_INSTRUCTIONS="You have ${TIMEFRAME} minutes. Use get_remaining_time() regularly. Continue until time exhausted. Use Multi-Action Mode. Save useful findings to StrixDB."
-          
+          EXTRA_INSTRUCTIONS="You have ${TIMEFRAME} minutes. Use get_remaining_time() regularly. Save useful workflows to StrixDB/workflows category."
           if [ -n "$USER_PROMPT" ]; then
             FULL_INSTRUCTIONS="${USER_PROMPT}. ${EXTRA_INSTRUCTIONS}"
           else
             FULL_INSTRUCTIONS="${EXTRA_INSTRUCTIONS}"
           fi
-          
-          echo "Target: $TARGET"
-          echo "Timeframe: $TIMEFRAME minutes"
-          echo "Scan Mode: $SCAN_MODE"
-          
+          echo "Target: $TARGET | Timeframe: $TIMEFRAME min | Mode: $SCAN_MODE"
           strix --target "$TARGET" --scan-mode "$SCAN_MODE" --non-interactive --instruction "$FULL_INSTRUCTIONS" 2>&1 | tee strix_output.log
           EXIT_CODE=${PIPESTATUS[0]}
-          
           VULN_COUNT=$(grep -ciE "vulnerability|CVE-|critical|high" strix_output.log 2>/dev/null || echo "0")
           echo "scan_completed=true" >> "$GITHUB_OUTPUT"
           echo "vulnerabilities_found=$VULN_COUNT" >> "$GITHUB_OUTPUT"
@@ -280,7 +261,82 @@ jobs:
         run: |
           AUTH_DIR="$HOME/.cli-proxy-api"
           [ -f "$AUTH_DIR/cliproxy.pid" ] && kill $(cat "$AUTH_DIR/cliproxy.pid") 2>/dev/null || true
-          rm -rf "$AUTH_DIR"/qwen-*.json "$AUTH_DIR/cliproxy.pid" 2>/dev/null || true
+
+      - name: Re-encrypt and Update QWEN_TOKENS
+        if: always() && github.event.inputs.reencrypt_tokens == 'true'
+        env:
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          SERVER_TOKEN: ${{ secrets.SERVER_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "::group::Re-encrypting Qwen tokens"
+          if [ -z "$ENCRYPTION_KEY" ]; then
+            echo "::warning::ENCRYPTION_KEY not set. Skipping."
+            exit 0
+          fi
+          if [ -z "$SERVER_TOKEN" ]; then
+            echo "::warning::SERVER_TOKEN not set. Skipping."
+            exit 0
+          fi
+          AUTH_DIR="$HOME/.cli-proxy-api"
+          cd "$AUTH_DIR"
+          TOKEN_COUNT=$(find . -maxdepth 1 -name 'qwen-*.json' 2>/dev/null | wc -l)
+          if [ "$TOKEN_COUNT" -eq 0 ]; then
+            echo "::warning::No tokens to re-encrypt"
+            exit 0
+          fi
+          echo "Re-encrypting $TOKEN_COUNT token(s)"
+          mkdir -p tokens_backup
+          ACCOUNT_NUM=1
+          for token_file in qwen-*.json; do
+            if [ -f "$token_file" ]; then
+              mkdir -p "tokens_backup/account-${ACCOUNT_NUM}"
+              cp "$token_file" "tokens_backup/account-${ACCOUNT_NUM}/"
+              ACCOUNT_NUM=$((ACCOUNT_NUM + 1))
+            fi
+          done
+          cd tokens_backup && tar -czf ../qwen-tokens-new.tar.gz . && cd ..
+          echo "$ENCRYPTION_KEY" | openssl enc -aes-256-cbc -salt -pbkdf2 -in qwen-tokens-new.tar.gz -out qwen-tokens-new.enc -pass stdin
+          NEW_SECRET_VALUE=$(base64 -w 0 qwen-tokens-new.enc)
+          echo "Encrypted (${#NEW_SECRET_VALUE} bytes)"
+          KEY_RESPONSE=$(curl -s -H "Authorization: Bearer $SERVER_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$GH_REPO/actions/secrets/public-key")
+          PUBLIC_KEY=$(echo "$KEY_RESPONSE" | jq -r '.key')
+          KEY_ID=$(echo "$KEY_RESPONSE" | jq -r '.key_id')
+          if [ -z "$PUBLIC_KEY" ] || [ "$PUBLIC_KEY" = "null" ]; then
+            echo "::error::Failed to get public key"
+            exit 1
+          fi
+          pip install pynacl -q
+          python3 -c "
+          import base64, sys, os
+          from nacl import encoding, public
+          pk = base64.b64decode(os.environ['PUBLIC_KEY'])
+          sv = open('secret_value.txt').read()
+          box = public.SealedBox(public.PublicKey(pk))
+          enc = box.encrypt(sv.encode('utf-8'))
+          print(base64.b64encode(enc).decode('utf-8'))
+          " > encrypted_value.txt <<< "$NEW_SECRET_VALUE"
+          echo "$NEW_SECRET_VALUE" > secret_value.txt
+          export PUBLIC_KEY
+          ENCRYPTED_VALUE=$(python3 -c "
+          import base64, os
+          from nacl import public
+          pk = base64.b64decode(os.environ['PUBLIC_KEY'])
+          sv = open('secret_value.txt').read().strip()
+          box = public.SealedBox(public.PublicKey(pk))
+          enc = box.encrypt(sv.encode('utf-8'))
+          print(base64.b64encode(enc).decode('utf-8'))
+          ")
+          curl -s -X PUT -H "Authorization: Bearer $SERVER_TOKEN" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" "https://api.github.com/repos/$GH_REPO/actions/secrets/QWEN_TOKENS" -d "{\"encrypted_value\":\"$ENCRYPTED_VALUE\",\"key_id\":\"$KEY_ID\"}"
+          echo "QWEN_TOKENS secret updated!"
+          rm -rf tokens_backup qwen-tokens-new.tar.gz qwen-tokens-new.enc secret_value.txt
+          echo "::endgroup::"
+
+      - name: Cleanup Token Files
+        if: always()
+        run: |
+          rm -rf "$HOME/.cli-proxy-api"/qwen-*.json "$HOME/.cli-proxy-api/cliproxy.pid" 2>/dev/null || true
 
       - name: Upload Scan Results
         uses: actions/upload-artifact@v4
@@ -296,22 +352,21 @@ jobs:
       - name: Create Security Summary
         if: always()
         run: |
-          cat > "$GITHUB_STEP_SUMMARY" << 'EOF'
-          # Strix Security Scan
-          
-          ## Configuration
-          - **Target**: `${{ github.event.inputs.target || './' }}`
-          - **Mode**: ${{ github.event.inputs.scan_mode || 'deep' }}
-          - **Model**: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}
-          - **Duration**: ${{ github.event.inputs.timeframe || '60' }} minutes
-          
-          ## Tools
-          **SAST**: semgrep, bandit, trufflehog, gitleaks, trivy, checkov, bearer, tfsec
-          **DAST**: nuclei, ffuf, nmap, nikto, sqlmap, gobuster, feroxbuster, httpx, subfinder
-          
-          ## Artifacts
-          Download **strix-results** for detailed scan results.
-          
-          ---
-          *Strix AI Scanner (89pl/Strixer)*
-          EOF
+          REENCRYPT="${{ github.event.inputs.reencrypt_tokens || 'true' }}"
+          echo "# Strix Security Scan" > "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Configuration" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Target**: \`${{ github.event.inputs.target || './' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Mode**: ${{ github.event.inputs.scan_mode || 'deep' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Model**: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Duration**: ${{ github.event.inputs.timeframe || '60' }} minutes" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Token Re-encryption**: $REENCRYPT" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$REENCRYPT" = "true" ]; then
+            echo "Tokens re-encrypted automatically. No need to run Qwen.yml." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Token re-encryption disabled. Run Qwen.yml to refresh." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "*Strix AI Scanner (89pl/Strixer)*" >> "$GITHUB_STEP_SUMMARY"
