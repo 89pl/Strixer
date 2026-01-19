@@ -347,10 +347,10 @@ class BaseAgent(metaclass=AgentMeta):
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
         final_response = None
 
-        async for response in self.llm.generate(self.state.get_conversation_history()):
-            final_response = response
-            if tracer and response.content:
-                tracer.update_streaming_content(self.state.agent_id, response.content)
+        response = await self.llm.generate(self.state.get_conversation_history())
+        final_response = response
+        if tracer and response.content:
+            tracer.update_streaming_content(self.state.agent_id, response.content)
 
         if final_response is None:
             return False
