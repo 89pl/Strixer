@@ -139,6 +139,14 @@ class DockerRuntime(AbstractRuntime):
                         "TOOL_SERVER_TOKEN": self._tool_server_token,
                         "STRIX_SANDBOX_EXECUTION_TIMEOUT": str(execution_timeout),
                         "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
+                        # Forward StrixDB Token and Config
+                        "STRIXDB_TOKEN": os.getenv("STRIXDB_TOKEN", ""),
+                        "STRIXDB_REPO": os.getenv("STRIXDB_REPO", ""),
+                        "STRIXDB_BRANCH": os.getenv("STRIXDB_BRANCH", "main"),
+                        "STRIXDB_OWNER": os.getenv("STRIXDB_OWNER", ""),
+                        # Forward GitHub Context
+                        "GITHUB_REPOSITORY_OWNER": os.getenv("GITHUB_REPOSITORY_OWNER", ""),
+                        "GITHUB_TOKEN": os.getenv("GITHUB_TOKEN", ""),
                     },
                     extra_hosts={HOST_GATEWAY_HOSTNAME: "host-gateway"},
                     tty=True,

@@ -75,8 +75,9 @@ def _get_strixdb_config() -> dict[str, str]:
     branch = os.getenv("STRIXDB_BRANCH", "main")
     repo_name = "StrixDB"
 
-    owner = ""
-    if token:
+    owner = os.getenv("STRIXDB_OWNER") or os.getenv("GITHUB_REPOSITORY_OWNER")
+    
+    if not owner and token:
         try:
             response = requests.get(
                 "https://api.github.com/user",
