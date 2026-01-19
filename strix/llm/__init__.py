@@ -1,27 +1,35 @@
-"""LLM module for Strix - Direct HTTP-based LLM client."""
+"""LLM module for Strix - Direct HTTP-based LLM client with CLIProxyAPI support."""
 
-# Core LLM classes (HTTP-based, no LiteLLM)
-from strix.llm.config import LLMConfig
-from strix.llm.llm import LLM, LLMRequestFailedError, LLMResponse, RequestStats
-
-# Direct HTTP client for simple usage
-from strix.llm.http_client import (
-    LLMClient,
-    chat,
-    get_llm_client,
-    stream_chat,
+from strix.llm.direct_api import (
+    DirectAPIClient,
+    DirectAPIError,
+    DirectAPIResponse,
+    get_direct_api_client,
+    is_direct_api_mode,
 )
 
+from .config import LLMConfig
+from .llm import LLM, LLMRequestFailedError, LLMResponse, RequestStats
+
+
 __all__ = [
-    # Core LLM classes
     "LLM",
     "LLMConfig",
     "LLMRequestFailedError",
     "LLMResponse",
     "RequestStats",
-    # HTTP client
-    "LLMClient",
-    "chat",
-    "get_llm_client",
-    "stream_chat",
+    "DirectAPIClient",
+    "DirectAPIError",
+    "DirectAPIResponse",
+    "get_direct_api_client",
+    "is_direct_api_mode",
 ]
+
+# Conditional litellm initialization
+try:
+    if not is_direct_api_mode():
+        import litellm
+        litellm._logging._disable_debugging()
+except ImportError:
+    # LiteLLM not available, using direct API mode
+    pass

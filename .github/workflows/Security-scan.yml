@@ -1,4 +1,4 @@
-name: strix-penetration-test
+name: Strixer - Direct CLIProxyAPI Security Scan
 
 on:
   workflow_dispatch:
@@ -34,6 +34,20 @@ on:
           - '360'
           - '480'
           - '720'
+      warning_minutes:
+        description: 'Minutes before end to warn AI (1-30)'
+        required: false
+        default: '5'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '5'
+          - '10'
+          - '15'
+          - '20'
+          - '30'
       scan_mode:
         description: 'Scan mode'
         required: false
@@ -53,6 +67,8 @@ on:
           - 'qwen3-coder-flash'
           - 'qwen3-max'
           - 'qwen-plus'
+          - 'qwen-turbo'
+          - 'qwen2.5-coder-32b-instruct'
       reencrypt_tokens:
         description: 'Re-encrypt and update QWEN_TOKENS after scan'
         required: false
@@ -72,27 +88,41 @@ on:
   pull_request:
 
 concurrency:
-  group: strix-scan-${{ github.head_ref || github.ref }}
+  group: strixer-scan-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 env:
   DEFAULT_TIMEFRAME: '60'
+  DEFAULT_WARNING_MINUTES: '5'
   DEFAULT_SCAN_MODE: 'deep'
   CLIPROXY_PORT: '8317'
   DASHBOARD_PORT: '8080'
 
 jobs:
   security-scan:
+    name: Strixer Security Scan (Direct CLIProxyAPI)
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(github.event.inputs.timeframe || '60') }}
     permissions:
       contents: read
       security-events: write
       pull-requests: write
 
     steps:
+      - name: Compute timeout
+        id: vars
+        run: |
+          set -euo pipefail
+          TF="${{ github.event.inputs.timeframe || env.DEFAULT_TIMEFRAME }}"
+          if ! [[ "$TF" =~ ^[0-9]+$ ]]; then
+            echo "Invalid timeframe: $TF" >&2
+            exit 1
+          fi
+          echo "timeout=$(( TF + 30 ))" >> "$GITHUB_OUTPUT"
+
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go Environment
         uses: actions/setup-go@v5
@@ -109,11 +139,6 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Setup Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.2'
-
       - name: Decrypt Qwen Tokens
         id: decrypt
         run: |
@@ -127,7 +152,7 @@ jobs:
           cd ~/.cli-proxy-api
           echo "${{ secrets.QWEN_TOKENS }}" | base64 -d > qwen-tokens.enc
           if ! echo "${{ github.event.inputs.decryption_password }}" | openssl enc -aes-256-cbc -d -salt -pbkdf2 -in qwen-tokens.enc -out qwen-tokens.tar.gz -pass stdin 2>/dev/null; then
-            echo "::error::Failed to decrypt tokens"
+            echo "::error::Failed to decrypt tokens. Invalid password"
             exit 1
           fi
           tar -xzf qwen-tokens.tar.gz
@@ -136,10 +161,10 @@ jobs:
           done
           TOKEN_COUNT=$(find . -maxdepth 1 -name 'qwen-*.json' | wc -l)
           if [ "$TOKEN_COUNT" -eq 0 ]; then
-            echo "::error::No token files found"
+            echo "::error::No token files found after decryption"
             exit 1
           fi
-          echo "Decrypted $TOKEN_COUNT account(s)"
+          echo "Successfully decrypted $TOKEN_COUNT Qwen account(s)"
           echo "token_count=$TOKEN_COUNT" >> "$GITHUB_OUTPUT"
           rm -f qwen-tokens.enc qwen-tokens.tar.gz
           echo "::endgroup::"
@@ -152,6 +177,11 @@ jobs:
           cd /tmp/CLIProxyAPI
           go build -o cli-proxy-api ./cmd/server
           sudo mv cli-proxy-api /usr/local/bin/
+          if ! cli-proxy-api --help >/dev/null 2>&1; then
+            echo "::error::CLIProxyAPI failed to install"
+            exit 1
+          fi
+          echo "CLIProxyAPI installed"
           echo "::endgroup::"
 
       - name: Install SAST Tools
@@ -175,41 +205,199 @@ jobs:
 
       - name: Configure CLIProxyAPI
         run: |
+          set -euo pipefail
+          echo "::group::Configuring CLIProxyAPI"
           AUTH_DIR="$HOME/.cli-proxy-api"
-          cat > "$AUTH_DIR/config.yaml" << 'CONFIGEOF'
+          cat > "$AUTH_DIR/config.yaml" << 'EOF'
           host: "127.0.0.1"
           port: 8317
           auth-dir: "~/.cli-proxy-api"
           debug: true
+          logging-to-file: true
           request-retry: 5
+          max-retry-interval: 60
+          quota-exceeded:
+            switch-project: true
+            switch-preview-model: true
           routing:
             strategy: "round-robin"
-          CONFIGEOF
+          EOF
           sed -i 's/^          //' "$AUTH_DIR/config.yaml"
+          echo "Configuration created:"
+          cat "$AUTH_DIR/config.yaml"
+          echo "::endgroup::"
 
       - name: Start CLIProxyAPI Server
         id: cliproxy
         run: |
+          set -euo pipefail
+          echo "::group::Starting CLIProxyAPI Server"
           AUTH_DIR="$HOME/.cli-proxy-api"
           cd "$AUTH_DIR"
+          
+          # List token files for debugging
+          echo "Token files found:"
+          ls -la qwen-*.json 2>/dev/null || echo "No qwen token files found!"
+          
           nohup cli-proxy-api -config config.yaml > cliproxy.log 2>&1 &
-          echo "$!" > cliproxy.pid
+          SERVER_PID=$!
+          echo "$SERVER_PID" > cliproxy.pid
           sleep 15
+          
+          if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo "::error::CLIProxyAPI failed to start"
+            cat cliproxy.log || echo "No log file"
+            exit 1
+          fi
+          
+          # Wait for server to be ready
           for i in {1..20}; do
-            if curl -s "http://127.0.0.1:${{ env.CLIPROXY_PORT }}/v1/models" | jq -e '.data' > /dev/null 2>&1; then
-              echo "CLIProxyAPI ready"
+            MODELS_RESPONSE=$(curl -s "http://127.0.0.1:${{ env.CLIPROXY_PORT }}/v1/models" 2>/dev/null || true)
+            if [ -n "$MODELS_RESPONSE" ] && echo "$MODELS_RESPONSE" | jq -e '.data' > /dev/null 2>&1; then
+              echo "CLIProxyAPI is ready!"
+              echo "Available models:"
+              echo "$MODELS_RESPONSE" | jq -r '.data[].id' 2>/dev/null | head -20 || true
               break
             fi
+            echo "Waiting for CLIProxyAPI... (attempt $i/20)"
             sleep 3
           done
-          echo "endpoint=http://127.0.0.1:${{ env.CLIPROXY_PORT }}/v1" >> "$GITHUB_OUTPUT"
+          
+          # Show startup logs
+          echo "CLIProxyAPI startup logs:"
+          head -50 cliproxy.log || true
+          
+          ENDPOINT="http://127.0.0.1:${{ env.CLIPROXY_PORT }}/v1"
+          echo "endpoint=$ENDPOINT" >> "$GITHUB_OUTPUT"
+          echo "pid=$SERVER_PID" >> "$GITHUB_OUTPUT"
+          echo "=========================================="
+          echo "CLIPROXYAPI READY (DIRECT HTTP MODE)"
+          echo "Endpoint: $ENDPOINT"
+          echo "Accounts: ${{ steps.decrypt.outputs.token_count }}"
+          echo "Model: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}"
+          echo "=========================================="
+          echo "::endgroup::"
+
+      - name: Setup Direct CLIProxyAPI Environment
+        run: |
+          set -euo pipefail
+          echo "::group::Setting up Direct CLIProxyAPI environment (NO LiteLLM)"
+          
+          # Direct CLIProxyAPI mode - NO LiteLLM dependency
+          echo "CLIPROXY_ENDPOINT=${{ steps.cliproxy.outputs.endpoint }}" >> "$GITHUB_ENV"
+          echo "CLIPROXY_MODEL=${{ github.event.inputs.model || 'qwen3-coder-plus' }}" >> "$GITHUB_ENV"
+          
+          # Dummy API key for CLIProxyAPI OAuth mode
+          echo "OPENAI_API_KEY=cliproxy-direct-mode" >> "$GITHUB_ENV"
+          echo "OPENAI_API_BASE=${{ steps.cliproxy.outputs.endpoint }}" >> "$GITHUB_ENV"
+          
+          # Enable direct API mode
+          echo "STRIX_DIRECT_API_MODE=true" >> "$GITHUB_ENV"
+          
+          # Test the endpoint directly
+          echo "Testing CLIProxyAPI endpoint directly..."
+          MODEL_COUNT=$(curl -s "${{ steps.cliproxy.outputs.endpoint }}/models" | jq '.data | length' 2>/dev/null || echo "0")
+          echo "Available models: $MODEL_COUNT"
+          
+          # Test a simple completion request - THIS IS CRITICAL
+          echo "Testing direct chat completion (validating Qwen token)..."
+          RESPONSE=$(curl -s -X POST "${{ steps.cliproxy.outputs.endpoint }}/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "${{ github.event.inputs.model || 'qwen3-coder-plus' }}",
+              "messages": [{"role": "user", "content": "Say OK"}],
+              "max_tokens": 10
+            }' 2>/dev/null || echo '{"error": "connection failed"}')
+          
+          echo "API Response: $RESPONSE"
+          
+          # Check for various error conditions
+          if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+            ERROR_CODE=$(echo "$RESPONSE" | jq -r '.error.code // .error' 2>/dev/null || echo "unknown")
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error.message // .error' 2>/dev/null || echo "unknown error")
+            
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════╗"
+            echo "║  ❌ QWEN TOKEN VALIDATION FAILED                             ║"
+            echo "╠══════════════════════════════════════════════════════════════╣"
+            echo "║  Error Code: $ERROR_CODE"
+            echo "║  Error Message: $ERROR_MSG"
+            echo "╠══════════════════════════════════════════════════════════════╣"
+            
+            if [[ "$ERROR_CODE" == "invalid_api_key" ]] || [[ "$ERROR_MSG" == *"expired"* ]] || [[ "$ERROR_MSG" == *"invalid"* ]]; then
+              echo "║  📛 Your Qwen authentication token has EXPIRED or is INVALID ║"
+              echo "║                                                              ║"
+              echo "║  TO FIX THIS:                                                ║"
+              echo "║  1. Go to https://chat.qwen.ai and log in                    ║"
+              echo "║  2. Open browser DevTools (F12) → Application → Cookies     ║"
+              echo "║  3. Copy the new token values                                ║"
+              echo "║  4. Update your QWEN_TOKENS secret in GitHub                 ║"
+              echo "║  5. Re-run this workflow                                     ║"
+            elif [[ "$ERROR_MSG" == *"auth_unavailable"* ]] || [[ "$ERROR_MSG" == *"no auth"* ]]; then
+              echo "║  📛 No valid authentication found in CLIProxyAPI             ║"
+              echo "║                                                              ║"
+              echo "║  The Qwen token files were decrypted but may be corrupted    ║"
+              echo "║  or in an unexpected format.                                 ║"
+            else
+              echo "║  📛 Unknown authentication error                             ║"
+            fi
+            
+            echo "╚══════════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "::error::Qwen token validation failed: $ERROR_MSG"
+            exit 1
+          fi
+          
+          if echo "$RESPONSE" | jq -e '.choices[0].message.content' > /dev/null 2>&1; then
+            AI_RESPONSE=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
+            echo ""
+            echo "╔══════════════════════════════════════════════════════════════╗"
+            echo "║  ✅ QWEN TOKEN VALIDATED SUCCESSFULLY                        ║"
+            echo "╠══════════════════════════════════════════════════════════════╣"
+            echo "║  AI Response: $AI_RESPONSE"
+            echo "║  Model: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}"
+            echo "║  Accounts: ${{ steps.decrypt.outputs.token_count }}"
+            echo "╚══════════════════════════════════════════════════════════════╝"
+            echo ""
+          else
+            echo "::error::Unexpected response format from CLIProxyAPI"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          echo "::endgroup::"
 
       - name: Install Strix from Source
         run: |
-          git clone --depth 1 https://github.com/89pl/Strixer.git /tmp/strix-source
+          set -euo pipefail
+          echo "::group::Installing Strix (Direct CLIProxyAPI Mode)"
+          
+          # Use the already checked out repository instead of cloning again
+          cp -r "$GITHUB_WORKSPACE" /tmp/strix-source
           cd /tmp/strix-source
-          pip install -e ".[sandbox]" || pip install -e .
-          strix --version || python -c "import strix; print('Strix installed')"
+          
+          pip install -q poetry
+          poetry config virtualenvs.create false
+          
+          # Install Strix with all dependencies
+          echo "Installing Strix dependencies with Poetry..."
+          if ! poetry install --no-interaction 2>&1; then
+            echo "::warning::Poetry install had issues, trying with pip fallback..."
+            pip install -e .
+          fi
+          
+          # Ensure critical dependencies are installed
+          echo "Verifying critical dependencies..."
+          pip install jinja2 httpx tenacity requests pydantic rich docker textual xmltodict aiohttp
+          
+          # Verify installation
+          echo "Verifying Strix installation..."
+          if ! python -c "from strix.interface.main import main; print('Strix CLI loaded successfully')"; then
+            echo "::error::Strix installation verification failed!"
+            exit 1
+          fi
+          
+          echo "Strix installation complete (Direct CLIProxyAPI Mode)"
+          echo "::endgroup::"
 
       - name: Build Dashboard
         id: dashboard_build
@@ -217,9 +405,15 @@ jobs:
         run: |
           echo "::group::Building Dashboard"
           cd /tmp/strix-source/strix/dashboard/frontend
-          npm install 2>/dev/null || true
-          npm run build 2>/dev/null || true
-          if [ -d "dist" ]; then
+          if [ ! -f "package.json" ]; then
+            echo "::warning::package.json not found. Skipping dashboard build."
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
+            exit 0
+          fi
+          npm install --legacy-peer-deps --no-audit --no-fund 2>&1 | tail -20 || true
+          npm run build 2>&1 || true
+          if [ -d "dist" ] || [ -d "out" ]; then
             echo "Dashboard built successfully"
             echo "built=true" >> "$GITHUB_OUTPUT"
           else
@@ -307,39 +501,86 @@ jobs:
 
       - name: Run Strix Security Scan
         id: strix
-        timeout-minutes: ${{ fromJSON(github.event.inputs.timeframe || env.DEFAULT_TIMEFRAME) }}
+        timeout-minutes: ${{ fromJSON(steps.vars.outputs.timeout) }}
         continue-on-error: true
         env:
           STRIXDB_TOKEN: ${{ secrets.STRIXDB_TOKEN }}
-          CLIPROXY_ENDPOINT: ${{ steps.cliproxy.outputs.endpoint }}
-          LLM_API_BASE: ${{ steps.cliproxy.outputs.endpoint }}
-          OPENAI_API_KEY: sk-dummy-key-for-cliproxy
-          OPENAI_API_BASE: ${{ steps.cliproxy.outputs.endpoint }}
+          # Direct CLIProxyAPI mode - model name without provider prefix
           STRIX_LLM: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}
-          STRIX_SCAN_DURATION_MINUTES: ${{ github.event.inputs.timeframe || '60' }}
+          LLM_API_BASE: ${{ steps.cliproxy.outputs.endpoint }}
+          OPENAI_API_KEY: cliproxy-direct-mode
+          OPENAI_API_BASE: ${{ steps.cliproxy.outputs.endpoint }}
+          # DIRECT CLIProxyAPI endpoint for HTTP requests
+          CLIPROXY_ENDPOINT: ${{ steps.cliproxy.outputs.endpoint }}
+          CLIPROXY_MODEL: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}
+          # Direct API mode settings
+          STRIX_DIRECT_API_MODE: 'true'
           STRIX_USE_HOST_NETWORK: 'true'
           STRIX_DASHBOARD_STATE_FILE: /tmp/strix_dashboard_state.json
+          STRIX_SCAN_DURATION_MINUTES: ${{ github.event.inputs.timeframe || '60' }}
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
         run: |
           set +e
+          echo "::group::Running Strix Security Scan (Direct CLIProxyAPI)"
           TARGET="${{ github.event.inputs.target || './' }}"
           TIMEFRAME="${{ github.event.inputs.timeframe || '60' }}"
           SCAN_MODE="${{ github.event.inputs.scan_mode || 'deep' }}"
+          
           export STRIX_SCAN_START_TIME=$(date +%s)
+          
           USER_PROMPT="${{ github.event.inputs.prompt }}"
-          EXTRA_INSTRUCTIONS="You have ${TIMEFRAME} minutes. Use get_remaining_time() regularly. Save useful workflows to StrixDB/workflows category."
+          EXTRA_INSTRUCTIONS="You have ${TIMEFRAME} minutes. Use get_remaining_time() regularly. Multi-action mode (up to 7 actions per call) for efficiency. Load-balanced across ${{ steps.decrypt.outputs.token_count }} Qwen accounts via CLIProxyAPI."
           if [ -n "$USER_PROMPT" ]; then
             FULL_INSTRUCTIONS="${USER_PROMPT}. ${EXTRA_INSTRUCTIONS}"
           else
             FULL_INSTRUCTIONS="${EXTRA_INSTRUCTIONS}"
           fi
-          echo "Target: $TARGET | Timeframe: $TIMEFRAME min | Mode: $SCAN_MODE"
+          
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║           STRIXER SECURITY SCAN STARTING                     ║"
+          echo "╠══════════════════════════════════════════════════════════════╣"
+          echo "║  Target: $TARGET"
+          echo "║  Timeframe: $TIMEFRAME minutes"
+          echo "║  Scan Mode: $SCAN_MODE"
+          echo "║  Model: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}"
+          echo "║  Accounts: ${{ steps.decrypt.outputs.token_count }}"
+          echo "║  CLIProxyAPI Endpoint: ${{ steps.cliproxy.outputs.endpoint }}"
+          echo "║  API Mode: Direct HTTP (no LiteLLM)"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          
+          # Verify CLIProxyAPI is still running before starting scan
+          echo "Verifying CLIProxyAPI status..."
+          if ! curl -s "${{ steps.cliproxy.outputs.endpoint }}/models" > /dev/null 2>&1; then
+            echo "::warning::CLIProxyAPI may not be responding. Checking logs..."
+            cat ~/.cli-proxy-api/cliproxy.log | tail -20 || true
+          else
+            echo "CLIProxyAPI is responding."
+          fi
+          
+          cd /tmp/strix-source
+          
           strix --target "$TARGET" --scan-mode "$SCAN_MODE" --non-interactive --instruction "$FULL_INSTRUCTIONS" 2>&1 | tee strix_output.log
           EXIT_CODE=${PIPESTATUS[0]}
-          VULN_COUNT=$(grep -ciE "vulnerability|CVE-|critical|high" strix_output.log 2>/dev/null || echo "0")
+          
+          # Log the CLIProxyAPI status for debugging
+          echo "========================================="
+          echo "CLIProxyAPI Status:"
+          if [ -f "$HOME/.cli-proxy-api/cliproxy.log" ]; then
+            echo "Last 30 lines of CLIProxyAPI log:"
+            tail -n 30 "$HOME/.cli-proxy-api/cliproxy.log"
+          fi
+          echo "========================================="
+          
+          VULN_COUNT=$(grep -ciE "vulnerability|VULNERABILITY|CVE-|critical|high.*severity" strix_output.log 2>/dev/null || echo "0")
+          # Ensure VULN_COUNT is a valid number
+          if ! [[ "$VULN_COUNT" =~ ^[0-9]+$ ]]; then
+            VULN_COUNT="0"
+          fi
+          
           echo "scan_completed=true" >> "$GITHUB_OUTPUT"
           echo "vulnerabilities_found=$VULN_COUNT" >> "$GITHUB_OUTPUT"
           echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
           exit 0
 
       - name: Stop Dashboard and Tunnel
@@ -352,7 +593,21 @@ jobs:
         if: always()
         run: |
           AUTH_DIR="$HOME/.cli-proxy-api"
-          [ -f "$AUTH_DIR/cliproxy.pid" ] && kill $(cat "$AUTH_DIR/cliproxy.pid") 2>/dev/null || true
+          if [ -f "$AUTH_DIR/cliproxy.pid" ]; then
+            PID=$(cat "$AUTH_DIR/cliproxy.pid")
+            kill $PID 2>/dev/null || true
+            wait $PID 2>/dev/null || true
+            echo "CLIProxyAPI stopped (PID: $PID)"
+          fi
+          if [ -f "$AUTH_DIR/cliproxy.log" ]; then
+            echo "=========================================="
+            echo "FULL CLIProxyAPI LOGS:"
+            echo "=========================================="
+            cat "$AUTH_DIR/cliproxy.log"
+            echo "=========================================="
+          fi
+          rm -rf "$AUTH_DIR"/qwen-*.json
+          rm -f "$AUTH_DIR/cliproxy.pid"
 
       - name: Re-encrypt and Update QWEN_TOKENS
         if: always() && github.event.inputs.reencrypt_tokens == 'true'
@@ -424,32 +679,108 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: strix-results-${{ github.run_id }}
+          name: strixer-results-${{ github.run_id }}
           path: |
-            strix_runs/
-            strix_output.log
+            /tmp/strix-source/strix_runs/
+            /tmp/strix-source/strix_output.log
             ~/.cli-proxy-api/cliproxy.log
             /tmp/dashboard.log
+            /tmp/tunnel.log
           retention-days: 30
 
       - name: Create Security Summary
         if: always()
         run: |
-          REENCRYPT="${{ github.event.inputs.reencrypt_tokens || 'true' }}"
+          set -euo pipefail
+          TIMEFRAME="${{ github.event.inputs.timeframe || env.DEFAULT_TIMEFRAME }}"
+          VULNS="${{ steps.strix.outputs.vulnerabilities_found }}"
+          TIMED_OUT="${{ steps.strix.outputs.timed_out }}"
+          TOKEN_COUNT="${{ steps.decrypt.outputs.token_count }}"
+          EXIT_CODE="${{ steps.strix.outputs.exit_code }}"
+          SCAN_MODE="${{ github.event.inputs.scan_mode || env.DEFAULT_SCAN_MODE }}"
+          MODEL="${{ github.event.inputs.model || 'qwen3-coder-plus' }}"
+          TARGET="${{ github.event.inputs.target }}"
           DASHBOARD_URL="${{ steps.tunnel.outputs.url }}"
-          echo "# Strix Security Scan" > "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$DASHBOARD_URL" ]; then
-            echo "## 🌐 Live Dashboard" >> "$GITHUB_STEP_SUMMARY"
-            echo "**[$DASHBOARD_URL]($DASHBOARD_URL)**" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
+          
+          # Determine status
+          if [ "$TIMED_OUT" == "true" ]; then
+            STATUS_EMOJI="⏰"
+            STATUS_TEXT="Scan completed (timeframe exhausted)"
+          elif [ "$EXIT_CODE" == "0" ]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="Scan completed successfully"
+          elif [ "$EXIT_CODE" == "2" ]; then
+            STATUS_EMOJI="🔴"
+            STATUS_TEXT="Scan completed with vulnerabilities found"
+          else
+            STATUS_EMOJI="⚠️"
+            STATUS_TEXT="Scan completed with exit code: $EXIT_CODE"
           fi
-          echo "## Configuration" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Target**: \`${{ github.event.inputs.target || './' }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Mode**: ${{ github.event.inputs.scan_mode || 'deep' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Model**: ${{ github.event.inputs.model || 'qwen3-coder-plus' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Duration**: ${{ github.event.inputs.timeframe || '60' }} minutes" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Dashboard**: ${{ github.event.inputs.enable_dashboard || 'true' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "---" >> "$GITHUB_STEP_SUMMARY"
-          echo "*Strix AI Scanner (89pl/Strixer)*" >> "$GITHUB_STEP_SUMMARY"
+          
+          # Create summary
+          cat > "$GITHUB_STEP_SUMMARY" << SUMMARY_EOF
+          # 🦉 Strixer Security Scan Dashboard
+
+          ## $STATUS_EMOJI Status: $STATUS_TEXT
+
+          ---
+
+          ### 📊 Scan Overview
+
+          | Property | Value |
+          |----------|-------|
+          | **Target** | \`$TARGET\` |
+          | **Scan Mode** | $SCAN_MODE |
+          | **Model** | $MODEL |
+          | **Duration** | $TIMEFRAME minutes |
+          | **Qwen Accounts** | $TOKEN_COUNT (load-balanced) |
+          | **API Mode** | Direct CLIProxyAPI (No LiteLLM) |
+          | **Exit Code** | $EXIT_CODE |
+
+          SUMMARY_EOF
+          
+          # Add dashboard info if available
+          if [ -n "$DASHBOARD_URL" ]; then
+            cat >> "$GITHUB_STEP_SUMMARY" << DASHEOF
+
+          ### 🌐 Live Dashboard
+
+          **[$DASHBOARD_URL]($DASHBOARD_URL)**
+
+          DASHEOF
+          fi
+          
+          # Add vulnerability info
+          VULN_NUM=${VULNS:-0}
+          cat >> "$GITHUB_STEP_SUMMARY" << FINDINGSEOF
+
+          ### 🔍 Findings
+
+          FINDINGSEOF
+          
+          if [ "$VULN_NUM" -gt "0" ]; then
+            echo "**🔴 Potential Vulnerabilities Detected: $VULN_NUM**" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> ⚠️ Review the detailed report in the workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "**🟢 No vulnerabilities detected in this scan.**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          
+          cat >> "$GITHUB_STEP_SUMMARY" << 'FEATURES_EOF'
+
+          ---
+
+          ### ⚙️ Configuration Features (Strixer)
+
+          - ✅ Multi-Action Mode (up to 7 actions/call)
+          - ✅ Qwen Token Load Balancing via CLIProxyAPI
+          - ✅ **Direct HTTP API Mode (No LiteLLM)**
+          - ✅ Automatic Token Refresh
+          - ✅ Request Retry (5 attempts)
+
+          ---
+
+          *Strix AI Scanner (89pl/Strixer) - Direct CLIProxyAPI Mode*
+          FEATURES_EOF
+          
+          echo "✅ Security summary created"

@@ -1,37 +1,141 @@
-"""
-LLM module for Strix - Direct HTTP-based LLM client.
-
-This module provides an async LLM client using direct HTTP requests
-to OpenAI-compatible APIs, replacing LiteLLM for simplicity.
-"""
-
-from __future__ import annotations
-
-import asyncio
-import json
 import logging
 import os
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from enum import Enum
+from fnmatch import fnmatch
+from pathlib import Path
 from typing import Any
 
-import aiohttp
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    select_autoescape,
+)
 
-from strix.config import Config
 from strix.llm.config import LLMConfig
 from strix.llm.memory_compressor import MemoryCompressor
-from strix.llm.utils import (
-    _truncate_to_first_function,
-    fix_incomplete_tool_call,
-    parse_tool_invocations,
-)
+from strix.llm.request_queue import get_global_queue
+from strix.llm.utils import _truncate_to_first_function, parse_tool_invocations
 from strix.skills import load_skills
 from strix.tools import get_tools_prompt
 from strix.utils.resource_paths import get_strix_resource_path
 
+# Import direct API module for non-LiteLLM mode
+from strix.llm.direct_api import (
+    DirectAPIClient,
+    DirectAPIError,
+    DirectAPIResponse,
+    get_direct_api_client,
+    is_direct_api_mode,
+    supports_prompt_caching as direct_supports_prompt_caching,
+    supports_vision as direct_supports_vision,
+    token_counter as direct_token_counter,
+)
+
+# Conditional import of litellm - only if not in direct API mode
+_litellm_available = False
+try:
+    if not is_direct_api_mode():
+        import litellm
+        from litellm import ModelResponse, completion_cost
+        from litellm.utils import supports_prompt_caching, supports_vision
+        _litellm_available = True
+        litellm.drop_params = True
+        litellm.modify_params = True
+except ImportError:
+    # LiteLLM not available, will use direct API mode
+    pass
+
 
 logger = logging.getLogger(__name__)
+
+
+def _get_api_key() -> str | None:
+    """Get API key from config.json or environment.
+    
+    Priority:
+    1. config.json api.api_key
+    2. LLM_API_KEY environment variable
+    3. Default placeholder for CLIProxyAPI OAuth mode (when endpoint is set)
+    
+    CLIProxyAPI Mode:
+    When using CLIProxyAPI, you only need to set the API_ENDPOINT - no API key required!
+    CLIProxyAPI handles authentication through OAuth, so API keys are optional.
+    """
+    try:
+        from strix.config import get_config
+        config = get_config()
+        if config.api_key:
+            return config.api_key
+        # If endpoint is set but no API key, use CLIProxyAPI OAuth mode
+        if config.api_endpoint:
+            return "cliproxy-oauth-mode"
+    except (ImportError, Exception):
+        pass
+    
+    # Fall back to environment variable
+    api_key = os.getenv("LLM_API_KEY")
+    if api_key:
+        return api_key
+    
+    # Check if API endpoint is set (CLIProxyAPI mode)
+    api_endpoint = (
+        os.getenv("CLIPROXY_ENDPOINT")
+        or os.getenv("LLM_API_BASE")
+        or os.getenv("OPENAI_API_BASE")
+        or os.getenv("LITELLM_BASE_URL")
+    )
+    if api_endpoint:
+        # CLIProxyAPI OAuth mode - no API key needed
+        return "cliproxy-oauth-mode"
+    
+    return None
+
+
+def _get_api_base() -> str | None:
+    """Get API base URL from config.json or environment.
+    
+    Priority:
+    1. config.json api.endpoint (CLIProxyAPI endpoint)
+    2. CLIPROXY_ENDPOINT environment variable (recommended for CLIProxyAPI)
+    3. LLM_API_BASE / OPENAI_API_BASE / LITELLM_BASE_URL environment variables
+    
+    CLIProxyAPI Mode:
+    Set CLIPROXY_ENDPOINT or api.endpoint in config.json to use CLIProxyAPI.
+    Example: http://localhost:8317/v1
+    """
+    try:
+        from strix.config import get_config
+        config = get_config()
+        if config.api_endpoint:
+            return config.api_endpoint
+    except (ImportError, Exception):
+        pass
+    
+    # Fall back to environment variables (CLIPROXY_ENDPOINT has priority)
+    return (
+        os.getenv("CLIPROXY_ENDPOINT")
+        or os.getenv("LLM_API_BASE")
+        or os.getenv("OPENAI_API_BASE")
+        or os.getenv("LITELLM_BASE_URL")
+        or os.getenv("OLLAMA_API_BASE")
+    )
+
+
+# Lazy initialization - will be set on first use
+_LLM_API_KEY: str | None = None
+_LLM_API_BASE: str | None = None
+_CREDENTIALS_INITIALIZED = False
+
+
+def _ensure_credentials() -> tuple[str | None, str | None]:
+    """Ensure credentials are initialized and return them."""
+    global _LLM_API_KEY, _LLM_API_BASE, _CREDENTIALS_INITIALIZED
+    if not _CREDENTIALS_INITIALIZED:
+        _LLM_API_KEY = _get_api_key()
+        _LLM_API_BASE = _get_api_base()
+        _CREDENTIALS_INITIALIZED = True
+    return _LLM_API_KEY, _LLM_API_BASE
 
 
 class LLMRequestFailedError(Exception):
@@ -41,11 +145,70 @@ class LLMRequestFailedError(Exception):
         self.details = details
 
 
+SUPPORTS_STOP_WORDS_FALSE_PATTERNS: list[str] = [
+    "o1*",
+    "grok-4-0709",
+    "grok-code-fast-1",
+    "deepseek-r1-0528*",
+]
+
+REASONING_EFFORT_PATTERNS: list[str] = [
+    "o1-2024-12-17",
+    "o1",
+    "o3",
+    "o3-2025-04-16",
+    "o3-mini-2025-01-31",
+    "o3-mini",
+    "o4-mini",
+    "o4-mini-2025-04-16",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gpt-5*",
+    "deepseek-r1-0528*",
+    "claude-sonnet-4-5*",
+    "claude-haiku-4-5*",
+]
+
+
+def normalize_model_name(model: str) -> str:
+    raw = (model or "").strip().lower()
+    if "/" in raw:
+        name = raw.split("/")[-1]
+        if ":" in name:
+            name = name.split(":", 1)[0]
+    else:
+        name = raw
+    if name.endswith("-gguf"):
+        name = name[: -len("-gguf")]
+    return name
+
+
+def model_matches(model: str, patterns: list[str]) -> bool:
+    raw = (model or "").strip().lower()
+    name = normalize_model_name(model)
+    for pat in patterns:
+        pat_l = pat.lower()
+        if "/" in pat_l:
+            if fnmatch(raw, pat_l):
+                return True
+        elif fnmatch(name, pat_l):
+            return True
+    return False
+
+
+class StepRole(str, Enum):
+    AGENT = "agent"
+    USER = "user"
+    SYSTEM = "system"
+
+
 @dataclass
 class LLMResponse:
     content: str
     tool_invocations: list[dict[str, Any]] | None = None
-    thinking_blocks: list[dict[str, Any]] | None = None
+    scan_id: str | None = None
+    step_number: int = 1
+    role: StepRole = StepRole.AGENT
 
 
 @dataclass
@@ -53,88 +216,80 @@ class RequestStats:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
+    cache_creation_tokens: int = 0
     cost: float = 0.0
     requests: int = 0
+    failed_requests: int = 0
 
     def to_dict(self) -> dict[str, int | float]:
         return {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cached_tokens": self.cached_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
             "cost": round(self.cost, 4),
             "requests": self.requests,
+            "failed_requests": self.failed_requests,
         }
 
 
 class LLM:
-    """Direct HTTP-based LLM client for OpenAI-compatible APIs."""
-
-    def __init__(self, config: LLMConfig, agent_name: str | None = None):
+    def __init__(
+        self, config: LLMConfig, agent_name: str | None = None, agent_id: str | None = None
+    ):
         self.config = config
         self.agent_name = agent_name
-        self.agent_id: str | None = None
+        self.agent_id = agent_id
         self._total_stats = RequestStats()
-        self.memory_compressor = MemoryCompressor(model_name=config.model_name)
-        self.system_prompt = self._load_system_prompt(agent_name)
-
-        # API configuration
-        self.api_base = (
-            Config.get("cliproxy_endpoint")
-            or Config.get("llm_api_base")
-            or Config.get("openai_api_base")
-            or "http://127.0.0.1:8317/v1"
-        )
-        self.api_key = Config.get("llm_api_key") or Config.get("openai_api_key") or "sk-dummy"
-
-        # Clean model name (remove provider prefix like "openai/")
-        self.model_name = config.model_name
-        if "/" in self.model_name:
-            self.model_name = self.model_name.split("/", 1)[1]
-
-        # Ensure base URL format
-        self.api_base = self.api_base.rstrip("/")
-        if not self.api_base.endswith("/v1"):
-            self.api_base = f"{self.api_base}/v1"
-
-        # Retry configuration
-        self.max_retries = int(Config.get("strix_llm_max_retries") or "5")
-        self.retry_delay = 1.0
-
-        reasoning = Config.get("strix_reasoning_effort")
-        if reasoning:
-            self._reasoning_effort = reasoning
-        elif config.scan_mode == "quick":
-            self._reasoning_effort = "medium"
+        self._last_request_stats = RequestStats()
+        
+        # Check if we should use direct API mode
+        self._use_direct_api = is_direct_api_mode() or not _litellm_available
+        
+        if self._use_direct_api:
+            logger.info("Using Direct API mode (no LiteLLM)")
+            self._direct_client = get_direct_api_client()
         else:
-            self._reasoning_effort = "high"
+            logger.info("Using LiteLLM mode")
+            self._direct_client = None
 
-    def _load_system_prompt(self, agent_name: str | None) -> str:
-        if not agent_name:
-            return ""
+        self.memory_compressor = MemoryCompressor(
+            model_name=self.config.model_name,
+            timeout=self.config.timeout,
+        )
 
-        try:
+        if agent_name:
             prompt_dir = get_strix_resource_path("agents", agent_name)
             skills_dir = get_strix_resource_path("skills")
-            env = Environment(
-                loader=FileSystemLoader([prompt_dir, skills_dir]),
+
+            loader = FileSystemLoader([prompt_dir, skills_dir])
+            self.jinja_env = Environment(
+                loader=loader,
                 autoescape=select_autoescape(enabled_extensions=(), default_for_string=False),
             )
 
-            skills_to_load = [
-                *list(self.config.skills or []),
-                f"scan_modes/{self.config.scan_mode}",
-            ]
-            skill_content = load_skills(skills_to_load, env)
-            env.globals["get_skill"] = lambda name: skill_content.get(name, "")
+            try:
+                # Use skills instead of prompt_modules
+                skills_to_load = list(self.config.prompt_modules or [])
+                skills_to_load.append(f"scan_modes/{self.config.scan_mode}")
 
-            result = env.get_template("system_prompt.jinja").render(
-                get_tools_prompt=get_tools_prompt,
-                loaded_skill_names=list(skill_content.keys()),
-                **skill_content,
-            )
-            return str(result)
-        except Exception:  # noqa: BLE001
-            return ""
+                skill_content = load_skills(skills_to_load, self.jinja_env)
+
+                def get_skill(name: str) -> str:
+                    return skill_content.get(name, "")
+
+                self.jinja_env.globals["get_skill"] = get_skill
+
+                self.system_prompt = self.jinja_env.get_template("system_prompt.jinja").render(
+                    get_tools_prompt=get_tools_prompt,
+                    loaded_skill_names=list(skill_content.keys()),
+                    **skill_content,
+                )
+            except (FileNotFoundError, OSError, ValueError) as e:
+                logger.warning(f"Failed to load system prompt for {agent_name}: {e}")
+                self.system_prompt = "You are a helpful AI assistant."
+        else:
+            self.system_prompt = "You are a helpful AI assistant."
 
     def set_agent_identity(self, agent_name: str | None, agent_id: str | None) -> None:
         if agent_name:
@@ -142,148 +297,379 @@ class LLM:
         if agent_id:
             self.agent_id = agent_id
 
-    async def generate(
-        self, conversation_history: list[dict[str, Any]]
-    ) -> AsyncIterator[LLMResponse]:
-        messages = self._prepare_messages(conversation_history)
+    def _build_identity_message(self) -> dict[str, Any] | None:
+        if not (self.agent_name and str(self.agent_name).strip()):
+            return None
+        identity_name = self.agent_name
+        identity_id = self.agent_id
+        content = (
+            "\n\n"
+            "<agent_identity>\n"
+            "<meta>Internal metadata: do not echo or reference; "
+            "not part of history or tool calls.</meta>\n"
+            "<note>You are now assuming the role of this agent. "
+            "Act strictly as this agent and maintain self-identity for this step. "
+            "Now go answer the next needed step!</note>\n"
+            f"<agent_name>{identity_name}</agent_name>\n"
+            f"<agent_id>{identity_id}</agent_id>\n"
+            "</agent_identity>\n\n"
+        )
+        return {"role": "user", "content": content}
 
-        for attempt in range(self.max_retries + 1):
-            try:
-                async for response in self._stream(messages):
-                    yield response
-                return  # noqa: TRY300
-            except Exception as e:  # noqa: BLE001
-                if attempt >= self.max_retries or not self._should_retry(e):
-                    self._raise_error(e)
-                wait = min(10, 2 * (2**attempt))
-                logger.warning(f"LLM request failed (attempt {attempt + 1}), retrying in {wait}s: {e}")
-                await asyncio.sleep(wait)
+    def _add_cache_control_to_content(
+        self, content: str | list[dict[str, Any]]
+    ) -> str | list[dict[str, Any]]:
+        if isinstance(content, str):
+            return [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        if isinstance(content, list) and content:
+            last_item = content[-1]
+            if isinstance(last_item, dict) and last_item.get("type") == "text":
+                return content[:-1] + [{**last_item, "cache_control": {"type": "ephemeral"}}]
+        return content
 
-    async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:
-        accumulated = ""
+    def _is_anthropic_model(self) -> bool:
+        if not self.config.model_name:
+            return False
+        model_lower = self.config.model_name.lower()
+        return any(provider in model_lower for provider in ["anthropic/", "claude"])
+
+    def _calculate_cache_interval(self, total_messages: int) -> int:
+        if total_messages <= 1:
+            return 10
+
+        max_cached_messages = 3
+        non_system_messages = total_messages - 1
+
+        interval = 10
+        while non_system_messages // interval > max_cached_messages:
+            interval += 10
+
+        return interval
+
+    def _prepare_cached_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if self._use_direct_api:
+            # Direct API mode doesn't support prompt caching
+            return messages
+            
+        if (
+            not self.config.enable_prompt_caching
+            or not supports_prompt_caching(self.config.model_name)
+            or not messages
+        ):
+            return messages
+
+        if not self._is_anthropic_model():
+            return messages
+
+        cached_messages = list(messages)
+
+        if cached_messages and cached_messages[0].get("role") == "system":
+            system_message = cached_messages[0].copy()
+            system_message["content"] = self._add_cache_control_to_content(
+                system_message["content"]
+            )
+            cached_messages[0] = system_message
+
+        total_messages = len(cached_messages)
+        if total_messages > 1:
+            interval = self._calculate_cache_interval(total_messages)
+
+            cached_count = 0
+            for i in range(interval, total_messages, interval):
+                if cached_count >= 3:
+                    break
+
+                if i < len(cached_messages):
+                    message = cached_messages[i].copy()
+                    message["content"] = self._add_cache_control_to_content(message["content"])
+                    cached_messages[i] = message
+                    cached_count += 1
+
+        return cached_messages
+
+    async def generate(  # noqa: PLR0912, PLR0915
+        self,
+        conversation_history: list[dict[str, Any]],
+        scan_id: str | None = None,
+        step_number: int = 1,
+    ) -> LLMResponse:
+        messages = [{"role": "system", "content": self.system_prompt}]
+
+        identity_message = self._build_identity_message()
+        if identity_message:
+            messages.append(identity_message)
+
+        compressed_history = list(self.memory_compressor.compress_history(conversation_history))
+
+        conversation_history.clear()
+        conversation_history.extend(compressed_history)
+        messages.extend(compressed_history)
+
+        cached_messages = self._prepare_cached_messages(messages)
+
+        try:
+            if self._use_direct_api:
+                response = await self._make_direct_request(cached_messages)
+            else:
+                response = await self._make_request(cached_messages)
+                
+            self._update_usage_stats(response)
+
+            content = ""
+            if self._use_direct_api:
+                content = response.content if hasattr(response, 'content') else ""
+            elif (
+                response.choices
+                and hasattr(response.choices[0], "message")
+                and response.choices[0].message
+            ):
+                content = getattr(response.choices[0].message, "content", "") or ""
+
+            content = _truncate_to_first_function(content)
+
+            # Multi-action support: find all function calls (up to 7)
+            # Ensure content ends properly if truncated
+            if "</function>" in content:
+                # Find the last complete function tag
+                last_func_end = content.rfind("</function>")
+                if last_func_end != -1:
+                    content = content[:last_func_end + len("</function>")]
+
+            tool_invocations = parse_tool_invocations(content)
+
+            return LLMResponse(
+                scan_id=scan_id,
+                step_number=step_number,
+                role=StepRole.AGENT,
+                content=content,
+                tool_invocations=tool_invocations if tool_invocations else None,
+            )
+
+        except DirectAPIError as e:
+            raise LLMRequestFailedError(f"Direct API request failed: {e.message}", e.details) from e
+        except Exception as e:
+            if _litellm_available and not self._use_direct_api:
+                # Handle LiteLLM exceptions
+                if hasattr(litellm, 'RateLimitError') and isinstance(e, litellm.RateLimitError):
+                    raise LLMRequestFailedError("LLM request failed: Rate limit exceeded", str(e)) from e
+                elif hasattr(litellm, 'AuthenticationError') and isinstance(e, litellm.AuthenticationError):
+                    raise LLMRequestFailedError("LLM request failed: Invalid API key", str(e)) from e
+                elif hasattr(litellm, 'NotFoundError') and isinstance(e, litellm.NotFoundError):
+                    raise LLMRequestFailedError("LLM request failed: Model not found", str(e)) from e
+                elif hasattr(litellm, 'ContextWindowExceededError') and isinstance(e, litellm.ContextWindowExceededError):
+                    raise LLMRequestFailedError("LLM request failed: Context too long", str(e)) from e
+                elif hasattr(litellm, 'ServiceUnavailableError') and isinstance(e, litellm.ServiceUnavailableError):
+                    raise LLMRequestFailedError("LLM request failed: Service unavailable", str(e)) from e
+                elif hasattr(litellm, 'Timeout') and isinstance(e, litellm.Timeout):
+                    raise LLMRequestFailedError("LLM request failed: Request timed out", str(e)) from e
+                elif hasattr(litellm, 'APIError') and isinstance(e, litellm.APIError):
+                    raise LLMRequestFailedError("LLM request failed: API error", str(e)) from e
+            raise LLMRequestFailedError(f"LLM request failed: {type(e).__name__}", str(e)) from e
+
+    @property
+    def usage_stats(self) -> dict[str, dict[str, int | float]]:
+        return {
+            "total": self._total_stats.to_dict(),
+            "last_request": self._last_request_stats.to_dict(),
+        }
+
+    def get_cache_config(self) -> dict[str, bool]:
+        if self._use_direct_api:
+            return {
+                "enabled": False,
+                "supported": False,
+            }
+        return {
+            "enabled": self.config.enable_prompt_caching,
+            "supported": supports_prompt_caching(self.config.model_name) if _litellm_available else False,
+        }
+
+    def _should_include_stop_param(self) -> bool:
+        if not self.config.model_name:
+            return True
+
+        return not model_matches(self.config.model_name, SUPPORTS_STOP_WORDS_FALSE_PATTERNS)
+
+    def _should_include_reasoning_effort(self) -> bool:
+        if not self.config.model_name:
+            return False
+
+        return model_matches(self.config.model_name, REASONING_EFFORT_PATTERNS)
+
+    def _model_supports_vision(self) -> bool:
+        if not self.config.model_name:
+            return False
+        try:
+            if self._use_direct_api:
+                return direct_supports_vision(self.config.model_name)
+            return bool(supports_vision(model=self.config.model_name)) if _litellm_available else False
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _filter_images_from_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        filtered_messages = []
+        for msg in messages:
+            content = msg.get("content")
+            updated_msg = msg
+            if isinstance(content, list):
+                filtered_content = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "image_url":
+                            filtered_content.append(
+                                {
+                                    "type": "text",
+                                    "text": "[Screenshot removed - model does not support "
+                                    "vision. Use view_source or execute_js instead.]",
+                                }
+                            )
+                        else:
+                            filtered_content.append(item)
+                    else:
+                        filtered_content.append(item)
+                if filtered_content:
+                    text_parts = [
+                        item.get("text", "") if isinstance(item, dict) else str(item)
+                        for item in filtered_content
+                    ]
+                    all_text = all(
+                        isinstance(item, dict) and item.get("type") == "text"
+                        for item in filtered_content
+                    )
+                    if all_text:
+                        updated_msg = {**msg, "content": "\n".join(text_parts)}
+                    else:
+                        updated_msg = {**msg, "content": filtered_content}
+                else:
+                    updated_msg = {**msg, "content": ""}
+            filtered_messages.append(updated_msg)
+        return filtered_messages
+
+    async def _make_direct_request(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> DirectAPIResponse:
+        """Make a request using the direct API client."""
+        if not self._model_supports_vision():
+            messages = self._filter_images_from_messages(messages)
+        
+        stop_param = ["</function>"] if self._should_include_stop_param() else None
+        
+        response = await self._direct_client.chat_completion_async(
+            messages=messages,
+            model=self.config.model_name,
+            stop=stop_param,
+        )
+        
         self._total_stats.requests += 1
+        self._last_request_stats = RequestStats(requests=1)
+        
+        return response
 
-        payload = {
-            "model": self.model_name,
+    async def _make_request(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> Any:  # Returns ModelResponse when litellm is available
+        """Make a request using LiteLLM."""
+        if not _litellm_available:
+            raise LLMRequestFailedError(
+                "LiteLLM is not available. Use direct API mode instead.",
+                "Install litellm or set STRIX_DIRECT_API_MODE=true"
+            )
+            
+        if not self._model_supports_vision():
+            messages = self._filter_images_from_messages(messages)
+
+        completion_args: dict[str, Any] = {
+            "model": self.config.model_name,
             "messages": messages,
-            "stream": True,
             "timeout": self.config.timeout,
         }
 
-        headers = {"Content-Type": "application/json"}
+        # Get credentials (lazily initialized from config.json or environment)
+        api_key, api_base = _ensure_credentials()
         
-        # Only add Authorization header if API key is real (not dummy)
-        # CLIProxyAPI doesn't require auth, so skip for local/dummy keys
-        if self.api_key and not self.api_key.startswith("sk-dummy"):
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        if api_key:
+            completion_args["api_key"] = api_key
+        if api_base:
+            completion_args["api_base"] = api_base
 
-        url = f"{self.api_base}/chat/completions"
+        if self._should_include_stop_param():
+            completion_args["stop"] = ["</function>"]
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout),
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise LLMRequestFailedError(
-                        f"API request failed with status {response.status}",
-                        error_text
-                    )
+        if self._should_include_reasoning_effort():
+            completion_args["reasoning_effort"] = "high"
 
-                async for line in response.content:
-                    if line:
-                        line_str = line.decode("utf-8").strip()
-                        if line_str.startswith("data: "):
-                            data = line_str[6:]
-                            if data == "[DONE]":
-                                break
-                            try:
-                                chunk = json.loads(data)
-                                if choices := chunk.get("choices"):
-                                    if delta := choices[0].get("delta"):
-                                        if content := delta.get("content"):
-                                            accumulated += content
-                                            if "</function>" in accumulated:
-                                                accumulated = accumulated[
-                                                    : accumulated.find("</function>") + len("</function>")
-                                                ]
-                                                yield LLMResponse(content=accumulated)
-                                                break
-                                            yield LLMResponse(content=accumulated)
+        queue = get_global_queue()
+        response = await queue.make_request(completion_args)
 
-                                # Track usage if available
-                                if usage := chunk.get("usage"):
-                                    self._total_stats.input_tokens += usage.get("prompt_tokens", 0)
-                                    self._total_stats.output_tokens += usage.get("completion_tokens", 0)
-                            except json.JSONDecodeError:
-                                continue
+        self._total_stats.requests += 1
+        self._last_request_stats = RequestStats(requests=1)
 
-        accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
-        yield LLMResponse(
-            content=accumulated,
-            tool_invocations=parse_tool_invocations(accumulated),
-            thinking_blocks=None,
-        )
+        return response
 
-    def _prepare_messages(self, conversation_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        messages = [{"role": "system", "content": self.system_prompt}]
-
-        if self.agent_name:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"\n\n<agent_identity>\n"
-                        f"<meta>Internal metadata: do not echo or reference.</meta>\n"
-                        f"<agent_name>{self.agent_name}</agent_name>\n"
-                        f"<agent_id>{self.agent_id}</agent_id>\n"
-                        f"</agent_identity>\n\n"
-                    ),
-                }
-            )
-
-        compressed = list(self.memory_compressor.compress_history(conversation_history))
-        conversation_history.clear()
-        conversation_history.extend(compressed)
-        messages.extend(compressed)
-
-        # Strip images if model doesn't support vision
-        messages = self._strip_images(messages)
-
-        return messages
-
-    def _should_retry(self, e: Exception) -> bool:
-        # Retry on connection errors, timeouts, and 5xx errors
-        if isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError)):
-            return True
-        if isinstance(e, LLMRequestFailedError):
-            # Check if it's a server error (5xx) or rate limit (429)
-            if e.details and ("500" in str(e.details) or "502" in str(e.details) or
-                             "503" in str(e.details) or "429" in str(e.details)):
-                return True
-        return False
-
-    def _raise_error(self, e: Exception) -> None:
-        from strix.telemetry import posthog
-
-        posthog.error("llm_error", type(e).__name__)
-        raise LLMRequestFailedError(f"LLM request failed: {type(e).__name__}", str(e)) from e
-
-    def _strip_images(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        result = []
-        for msg in messages:
-            content = msg.get("content")
-            if isinstance(content, list):
-                text_parts = []
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        text_parts.append(item.get("text", ""))
-                    elif isinstance(item, dict) and item.get("type") == "image_url":
-                        text_parts.append("[Image removed - model doesn't support vision]")
-                result.append({**msg, "content": "\n".join(text_parts)})
+    def _update_usage_stats(self, response: Any) -> None:
+        try:
+            if self._use_direct_api:
+                # Handle DirectAPIResponse
+                if hasattr(response, 'usage'):
+                    usage = response.usage
+                    input_tokens = usage.get("prompt_tokens", 0)
+                    output_tokens = usage.get("completion_tokens", 0)
+                else:
+                    input_tokens = 0
+                    output_tokens = 0
+                cached_tokens = 0
+                cache_creation_tokens = 0
+                cost = 0.0  # Direct API doesn't track cost
             else:
-                result.append(msg)
-        return result
+                # Handle LiteLLM ModelResponse
+                if hasattr(response, "usage") and response.usage:
+                    input_tokens = getattr(response.usage, "prompt_tokens", 0)
+                    output_tokens = getattr(response.usage, "completion_tokens", 0)
+
+                    cached_tokens = 0
+                    cache_creation_tokens = 0
+
+                    if hasattr(response.usage, "prompt_tokens_details"):
+                        prompt_details = response.usage.prompt_tokens_details
+                        if hasattr(prompt_details, "cached_tokens"):
+                            cached_tokens = prompt_details.cached_tokens or 0
+
+                    if hasattr(response.usage, "cache_creation_input_tokens"):
+                        cache_creation_tokens = response.usage.cache_creation_input_tokens or 0
+
+                else:
+                    input_tokens = 0
+                    output_tokens = 0
+                    cached_tokens = 0
+                    cache_creation_tokens = 0
+
+                try:
+                    cost = completion_cost(response) or 0.0 if _litellm_available else 0.0
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Failed to calculate cost: {e}")
+                    cost = 0.0
+
+            self._total_stats.input_tokens += input_tokens
+            self._total_stats.output_tokens += output_tokens
+            if not self._use_direct_api:
+                self._total_stats.cached_tokens += cached_tokens
+                self._total_stats.cache_creation_tokens += cache_creation_tokens
+            self._total_stats.cost += cost
+
+            self._last_request_stats.input_tokens = input_tokens
+            self._last_request_stats.output_tokens = output_tokens
+            if not self._use_direct_api:
+                self._last_request_stats.cached_tokens = cached_tokens
+                self._last_request_stats.cache_creation_tokens = cache_creation_tokens
+            self._last_request_stats.cost = cost
+
+            if not self._use_direct_api and cached_tokens > 0:
+                logger.info(f"Cache hit: {cached_tokens} cached tokens, {input_tokens} new tokens")
+            if not self._use_direct_api and cache_creation_tokens > 0:
+                logger.info(f"Cache creation: {cache_creation_tokens} tokens written to cache")
+
+            logger.info(f"Usage stats: {self.usage_stats}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Failed to update usage stats: {e}")

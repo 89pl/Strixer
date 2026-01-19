@@ -1,12 +1,23 @@
-"""Memory compressor for conversation history management."""
-
 import logging
+import os
 from typing import Any
 
-import tiktoken
+from strix.llm.direct_api import (
+    DirectAPIClient,
+    DirectAPIError,
+    get_direct_api_client,
+    is_direct_api_mode,
+    token_counter as direct_token_counter,
+)
 
-from strix.config import Config
-from strix.llm.http_client import get_llm_client
+# Conditional import of litellm
+_litellm_available = False
+try:
+    if not is_direct_api_mode():
+        import litellm
+        _litellm_available = True
+except ImportError:
+    pass
 
 
 logger = logging.getLogger(__name__)
@@ -46,20 +57,13 @@ Provide a technically precise summary that preserves all operational security co
 keeping the summary concise and to the point."""
 
 
-def _get_encoding(model: str) -> tiktoken.Encoding:
-    """Get tiktoken encoding for a model."""
-    try:
-        return tiktoken.encoding_for_model(model)
-    except KeyError:
-        # Default to cl100k_base for unknown models (GPT-4/ChatGPT default)
-        return tiktoken.get_encoding("cl100k_base")
-
-
 def _count_tokens(text: str, model: str) -> int:
-    """Count tokens in text using tiktoken."""
+    """Count tokens in text."""
     try:
-        enc = _get_encoding(model)
-        return len(enc.encode(text))
+        if is_direct_api_mode() or not _litellm_available:
+            return direct_token_counter(text)
+        count = litellm.token_counter(model=model, text=text)
+        return int(count)
     except Exception:
         logger.exception("Failed to count tokens")
         return len(text) // 4  # Rough estimate
@@ -99,8 +103,9 @@ def _extract_message_text(msg: dict[str, Any]) -> str:
 def _summarize_messages(
     messages: list[dict[str, Any]],
     model: str,
-    timeout: int = 30,
+    timeout: int = 600,
 ) -> dict[str, Any]:
+    """Summarize messages using either direct API or LiteLLM."""
     if not messages:
         empty_summary = "<context_summary message_count='0'>{text}</context_summary>"
         return {
@@ -118,17 +123,25 @@ def _summarize_messages(
     prompt = SUMMARY_PROMPT_TEMPLATE.format(conversation=conversation)
 
     try:
-        client = get_llm_client()
-        # Clean model name if it has provider prefix
-        clean_model = model.split("/", 1)[1] if "/" in model else model
+        if is_direct_api_mode() or not _litellm_available:
+            # Use direct API
+            client = get_direct_api_client()
+            response = client.chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+            )
+            summary = response.content or ""
+        else:
+            # Use LiteLLM
+            completion_args = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "timeout": timeout,
+            }
 
-        response = client.chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=clean_model,
-            timeout=timeout,
-        )
-
-        summary = response["choices"][0]["message"]["content"] or ""
+            response = litellm.completion(**completion_args)
+            summary = response.choices[0].message.content or ""
+            
         if not summary.strip():
             return messages[0]
         summary_msg = "<context_summary message_count='{count}'>{text}</context_summary>"
@@ -164,11 +177,11 @@ class MemoryCompressor:
         self,
         max_images: int = 3,
         model_name: str | None = None,
-        timeout: int | None = None,
+        timeout: int = 600,
     ):
         self.max_images = max_images
-        self.model_name = model_name or Config.get("strix_llm")
-        self.timeout = timeout or int(Config.get("strix_memory_compressor_timeout") or "30")
+        self.model_name = model_name or os.getenv("STRIX_LLM", "openai/gpt-5")
+        self.timeout = timeout
 
         if not self.model_name:
             raise ValueError("STRIX_LLM environment variable must be set and not empty")
