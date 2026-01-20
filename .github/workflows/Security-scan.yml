@@ -124,6 +124,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Normalize Image Name case
+        run: |
+          # Convert owner to lowercase for Docker image name compatibility
+          OWNER="${{ github.repository_owner }}"
+          OWNER_LOWER="${OWNER,,}"
+          echo "STRIX_IMAGE=ghcr.io/${OWNER_LOWER}/strix-sandbox:latest" >> $GITHUB_ENV
+          echo "GITHUB_REPOSITORY_OWNER=${OWNER}" >> $GITHUB_ENV
+
       - name: Setup Go Environment
         uses: actions/setup-go@v5
         with:
@@ -519,10 +527,6 @@ jobs:
           STRIX_DASHBOARD_STATE_FILE: /tmp/strix_dashboard_state.json
           STRIX_SCAN_DURATION_MINUTES: ${{ github.event.inputs.timeframe || '60' }}
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          # Use custom image from this repository
-          STRIX_IMAGE: ghcr.io/${{ github.repository_owner }}/strix-sandbox:latest
-          # Explicitly pass owner for StrixDB resolution
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: |
           set +e
           echo "::group::Running Strix Security Scan (Direct CLIProxyAPI)"

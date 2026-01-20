@@ -19,6 +19,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Normalize Image Name Case
+        run: |
+          OWNER="${{ github.repository_owner }}"
+          OWNER_LOWER="${OWNER,,}"
+          echo "IMAGE_NAME=${OWNER_LOWER}/strix-sandbox" >> $GITHUB_ENV
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
