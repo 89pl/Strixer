@@ -139,8 +139,41 @@ def _get_file_path(category: str, name: str, extension: str = ".json") -> str:
     return f"{category}/{sanitized_name}{extension}"
 
 
+def _discover_categories(config: dict[str, str]) -> set[str]:
+    """Discover existing categories (directories) in the StrixDB repository."""
+    if not config["repo"] or not config["token"]:
+        return set()
+
+    try:
+        url = f"{config['api_base']}/repos/{config['repo']}/contents"
+        response = requests.get(
+            url,
+            headers=_get_headers(config["token"]),
+            timeout=10,
+        )
+
+        discovered = set()
+        if response.status_code == 200:
+            items = response.json()
+            for item in items:
+                if item["type"] == "dir" and not item["name"].startswith("."):
+                    discovered.add(item["name"])
+        return discovered
+    except requests.RequestException:
+        return set()
+
+
 def _get_valid_categories() -> list[str]:
-    """Get all valid categories (default + dynamically created)."""
+    """Get all valid categories (default + dynamically created + discovered)."""
+    # Try to discover remote categories if possible
+    try:
+        config = _get_strixdb_config()
+        if config["repo"] and config["token"]:
+            remote_cats = _discover_categories(config)
+            _dynamic_categories.update(remote_cats)
+    except Exception:
+        pass
+
     return list(set(DEFAULT_CATEGORIES) | _dynamic_categories)
 
 

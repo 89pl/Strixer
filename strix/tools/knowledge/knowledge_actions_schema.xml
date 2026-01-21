@@ -1,0 +1,136 @@
+<tools>
+  <tool name="create_knowledge_entry">
+    <description>Create a new knowledge entry with advanced organization.</description>
+    <parameters>
+      <parameter name="title" type="string" required="true">
+        <description>Entry title.</description>
+      </parameter>
+      <parameter name="content" type="string" required="true">
+        <description>Entry content.</description>
+      </parameter>
+      <parameter name="category" type="string" required="false">
+        <description>Category (findings, credentials, endpoints, techniques, general, etc.). Default: general.</description>
+      </parameter>
+      <parameter name="priority" type="string" required="false">
+        <description>Priority level (critical, high, medium, low). Default: medium.</description>
+      </parameter>
+      <parameter name="tags" type="list" required="false">
+        <description>Tags for categorization.</description>
+      </parameter>
+      <parameter name="collection" type="string" required="false">
+        <description>Optional collection (folder) to add entry to.</description>
+      </parameter>
+      <parameter name="metadata" type="dict" required="false">
+        <description>Additional metadata key-value pairs.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="update_knowledge_entry">
+    <description>Update an existing knowledge entry with version tracking.</description>
+    <parameters>
+      <parameter name="entry_id" type="string" required="true">
+        <description>ID of entry to update.</description>
+      </parameter>
+      <parameter name="title" type="string" required="false">
+        <description>New title.</description>
+      </parameter>
+      <parameter name="content" type="string" required="false">
+        <description>New content (replaces existing).</description>
+      </parameter>
+      <parameter name="priority" type="string" required="false">
+        <description>New priority.</description>
+      </parameter>
+      <parameter name="tags" type="list" required="false">
+        <description>New tags.</description>
+      </parameter>
+      <parameter name="append_content" type="string" required="false">
+        <description>Content to append to existing content.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="delete_knowledge_entry">
+    <description>Delete a knowledge entry.</description>
+    <parameters>
+      <parameter name="entry_id" type="string" required="true">
+        <description>ID of entry to delete.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="search_knowledge">
+    <description>Full-text search with filtering and relevance ranking.</description>
+    <parameters>
+      <parameter name="query" type="string" required="true">
+        <description>Search query.</description>
+      </parameter>
+      <parameter name="category" type="list" required="false">
+        <description>Filter by list of categories.</description>
+      </parameter>
+      <parameter name="priority" type="list" required="false">
+        <description>Filter by list of priorities.</description>
+      </parameter>
+      <parameter name="tags" type="list" required="false">
+        <description>Filter by list of tags.</description>
+      </parameter>
+      <parameter name="collection" type="string" required="false">
+        <description>Filter by collection.</description>
+      </parameter>
+      <parameter name="limit" type="integer" required="false">
+        <description>Maximum results (default: 20).</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="link_entries">
+    <description>Create a typed link between two knowledge entries.</description>
+    <parameters>
+      <parameter name="source_id" type="string" required="true">
+        <description>Source entry ID.</description>
+      </parameter>
+      <parameter name="target_id" type="string" required="true">
+        <description>Target entry ID.</description>
+      </parameter>
+      <parameter name="relationship_type" type="string" required="false">
+        <description>Type of relationship (related_to, depends_on, blocks, references, confirms, contradicts, extends, duplicates). Default: related_to.</description>
+      </parameter>
+      <parameter name="notes" type="string" required="false">
+        <description>Optional notes about the relationship.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="create_from_template">
+    <description>Create a knowledge entry from a predefined template.</description>
+    <parameters>
+      <parameter name="template_name" type="string" required="true">
+        <description>Name of the template (vulnerability, credential, endpoint, technique, bypass).</description>
+      </parameter>
+      <parameter name="data" type="dict" required="true">
+        <description>Data to fill the template.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="get_knowledge_stats">
+    <description>Get statistics about the knowledge base.</description>
+    <parameters>
+    </parameters>
+  </tool>
+
+  <tool name="list_knowledge_entries">
+    <description>List knowledge entries with optional filtering.</description>
+    <parameters>
+      <parameter name="category" type="string" required="false">
+        <description>Filter by category.</description>
+      </parameter>
+      <parameter name="collection" type="string" required="false">
+        <description>Filter by collection.</description>
+      </parameter>
+      <parameter name="limit" type="integer" required="false">
+        <description>Maximum results (default: 50).</description>
+      </parameter>
+    </parameters>
+  </tool>
+</tools>

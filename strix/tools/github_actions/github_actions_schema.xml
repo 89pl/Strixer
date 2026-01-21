@@ -1,0 +1,184 @@
+<tools>
+  <tool name="github_create_workflow">
+    <description>Create a new GitHub Actions workflow file in a repository. Use this to create custom workflows for hosting, validation, testing, or any automation task.</description>
+    <parameters>
+      <parameter name="workflow_name" type="string" required="true">
+        <description>Name for the workflow file (e.g., 'my-scan.yml').</description>
+      </parameter>
+      <parameter name="workflow_content" type="string" required="true">
+        <description>Full YAML content of the workflow.</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository in 'owner/repo' format (defaults to STRIXDB_REPO).</description>
+      </parameter>
+      <parameter name="branch" type="string" required="false">
+        <description>Branch to create workflow on (default: main).</description>
+      </parameter>
+      <parameter name="commit_message" type="string" required="false">
+        <description>Optional commit message.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_trigger_workflow">
+    <description>Trigger a GitHub Actions workflow to run using workflow_dispatch.</description>
+    <parameters>
+      <parameter name="workflow_id" type="string" required="true">
+        <description>Workflow file name (e.g., 'build.yml') or workflow ID number.</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository in 'owner/repo' format.</description>
+      </parameter>
+      <parameter name="branch" type="string" required="false">
+        <description>Branch to run workflow on (default: main).</description>
+      </parameter>
+      <parameter name="inputs" type="dict" required="false">
+        <description>Optional workflow input parameters as key-value pairs.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_get_workflow_runs">
+    <description>Get the status of workflow runs.</description>
+    <parameters>
+      <parameter name="workflow_id" type="string" required="false">
+        <description>Optional workflow file name to filter by.</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository in 'owner/repo' format.</description>
+      </parameter>
+      <parameter name="status" type="string" required="false">
+        <description>Filter by status (queued, in_progress, completed).</description>
+      </parameter>
+      <parameter name="limit" type="integer" required="false">
+        <description>Maximum number of runs to return (default: 10).</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_list_workflows">
+    <description>List all workflows in a repository.</description>
+    <parameters>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository in 'owner/repo' format.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_create_hosting_workflow">
+    <description>Create a workflow to host/deploy an application for testing (white-box scanning).</description>
+    <parameters>
+      <parameter name="app_name" type="string" required="true">
+        <description>Name for the hosting workflow.</description>
+      </parameter>
+      <parameter name="build_command" type="string" required="false">
+        <description>Command to build the application (default: "npm run build").</description>
+      </parameter>
+      <parameter name="install_command" type="string" required="false">
+        <description>Command to install dependencies (default: "npm install").</description>
+      </parameter>
+      <parameter name="output_dir" type="string" required="false">
+        <description>Output directory after build (default: "dist").</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository to create workflow in.</description>
+      </parameter>
+      <parameter name="port" type="integer" required="false">
+        <description>Port to run the application on (default: 3000).</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_create_validation_workflow">
+    <description>Create a validation workflow to verify exploits or test findings in a clean environment.</description>
+    <parameters>
+      <parameter name="name" type="string" required="true">
+        <description>Name for the validation workflow.</description>
+      </parameter>
+      <parameter name="validation_script" type="string" required="true">
+        <description>The Python script content to run for validation.</description>
+      </parameter>
+      <parameter name="setup_commands" type="list" required="false">
+        <description>Optional list of shell setup commands to run first.</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository to create workflow in.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_create_scanner_workflow">
+    <description>Create a workflow to run security scanning tools (offload heavy scanning).</description>
+    <parameters>
+      <parameter name="name" type="string" required="true">
+        <description>Name for the scanner workflow.</description>
+      </parameter>
+      <parameter name="target" type="string" required="true">
+        <description>Target URL or IP to scan.</description>
+      </parameter>
+      <parameter name="scan_commands" type="list" required="true">
+        <description>List of scan commands to execute.</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository to create workflow in.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_create_custom_workflow">
+    <description>Create a fully custom GitHub Actions workflow.</description>
+    <parameters>
+      <parameter name="name" type="string" required="true">
+        <description>Workflow name.</description>
+      </parameter>
+      <parameter name="description" type="string" required="true">
+        <description>Description of what the workflow does.</description>
+      </parameter>
+      <parameter name="steps" type="list" required="true">
+        <description>List of step definitions, each with 'name' and either 'run' or 'uses'.</description>
+      </parameter>
+      <parameter name="triggers" type="list" required="false">
+        <description>List of triggers (e.g., ['workflow_dispatch']).</description>
+      </parameter>
+      <parameter name="inputs" type="dict" required="false">
+        <description>Workflow dispatch inputs definition.</description>
+      </parameter>
+      <parameter name="env_vars" type="dict" required="false">
+        <description>Environment variables for the workflow.</description>
+      </parameter>
+      <parameter name="timeout_minutes" type="integer" required="false">
+        <description>Job timeout in minutes (default: 60).</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository to create workflow in.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_get_workflow_artifacts">
+    <description>Get artifacts from a workflow run.</description>
+    <parameters>
+      <parameter name="run_id" type="integer" required="true">
+        <description>The workflow run ID.</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository in 'owner/repo' format.</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="github_delete_workflow">
+    <description>Delete a workflow file.</description>
+    <parameters>
+      <parameter name="workflow_path" type="string" required="true">
+        <description>Path to the workflow file (e.g., .github/workflows/test.yml).</description>
+      </parameter>
+      <parameter name="repo" type="string" required="false">
+        <description>Repository in 'owner/repo' format.</description>
+      </parameter>
+      <parameter name="branch" type="string" required="false">
+        <description>Branch to delete from (default: main).</description>
+      </parameter>
+    </parameters>
+  </tool>
+</tools>
