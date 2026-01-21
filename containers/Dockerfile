@@ -116,10 +116,18 @@ RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/
 
 RUN apt-get install -y wapiti
 
+# Install Gitleaks
+RUN curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_x64.tar.gz -o gitleaks.tar.gz && \
+    tar -xzf gitleaks.tar.gz && \
+    mv gitleaks /usr/local/bin/ && \
+    rm gitleaks.tar.gz
+
 USER pentester
 
 RUN pipx install semgrep && \
-    pipx install bandit
+    pipx install bandit && \
+    pipx install safety && \
+    pipx install pip-audit
 
 RUN npm install -g jshint
 
@@ -174,14 +182,7 @@ COPY strix/utils/ /app/strix/utils/
 COPY strix/telemetry/ /app/strix/telemetry/
 COPY strix/runtime/tool_server.py strix/runtime/__init__.py strix/runtime/runtime.py /app/strix/runtime/
 
-COPY strix/tools/__init__.py strix/tools/registry.py strix/tools/executor.py strix/tools/argument_parser.py strix/tools/context.py /app/strix/tools/
-
-COPY strix/tools/browser/ /app/strix/tools/browser/
-COPY strix/tools/file_edit/ /app/strix/tools/file_edit/
-COPY strix/tools/notes/ /app/strix/tools/notes/
-COPY strix/tools/python/ /app/strix/tools/python/
-COPY strix/tools/terminal/ /app/strix/tools/terminal/
-COPY strix/tools/proxy/ /app/strix/tools/proxy/
+COPY strix/tools/ /app/strix/tools/
 
 RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.bashrc && \
     echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.profile
