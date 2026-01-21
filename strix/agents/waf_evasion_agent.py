@@ -13,52 +13,22 @@ class WAFEvasionAgent(BaseAgent):
     """
 
     def __init__(self, config: dict[str, Any]):
-        # Inject specialized system prompt before initializing BaseAgent
-        self._inject_security_personality(config)
+        # Ensure LLM is configured for high creativity/reasoning
+        if "llm_config" not in config:
+            config["llm_config"] = LLMConfig(
+                model="gpt-4o",
+                temperature=0.8, # Higher temperature for creative evasion
+            )
+        
+        # Ensure web_search is available for 0-day research
+        if "tools" in config and isinstance(config["tools"], list):
+            if "web_search" not in config["tools"]:
+                config["tools"].append("web_search")
+                # Also add search_web alias just in case
+                config["tools"].append("search_web")
+        
         super().__init__(config)
         self.engine = WAFEvasionEngine()
 
-    def _inject_security_personality(self, config: dict[str, Any]) -> None:
-        """
-        Configures the agent with a specialized security researcher persona.
-        """
-        context = config.get("context", {})
-        payload = context.get("payload", "UNKNOWN")
-        waf_name = context.get("waf_name", "Unknown")
+    # Redundant _inject_security_personality removed as we use system.j2
 
-        persona = f"""
-You are the **Strix WAF Evasion Specialist**.
-Your ONLY goal is to bypass the Web Application Firewall (WAF) to verify if a vulnerability is reachable.
-
-Current Target Context:
-- **Blocked Payload**: `{payload}`
-- **Detected WAF**: {waf_name}
-
-**Methodology**:
-1. **Analyze**: Why was it blocked? (Keyword? Length? Encoding?)
-2. **Mutate**: Use the `waf_mutation_tool` or your own knowledge to generate polymorphic variations.
-3. **Test**: Execute the request again with the mutated payload.
-4. **Iterate**: If blocked again, learn and try a completely different obfuscation technique.
-
-**Rules**:
-- Do NOT ask for permission. You are in a sandbox execution mode.
-- Do NOT give up easily. Try at least 3 distinct encoded variations.
-- Use `waf_mutation_tool` to get algorithmic suggestions, but also use your own creativity.
-"""
-        # Ensure we have a valid LLM config, prioritizing the one from config
-        if "llm_config" not in config:
-            config["llm_config"] = LLMConfig(
-                model="gpt-4o",  # Default to high-intelligence model for this complex task
-                temperature=0.7, # Slightly creative for mutations
-            )
-        
-        # Override or append to system prompt logic if BaseAgent supports it
-        # (Assuming BaseAgent uses Jinja templates, we might need to handle this via state)
-        # For now, we will add this as the first user message if system prompt is template-locked,
-        # or rely on the specialized 'strix/resources/agents/WAFEvasionAgent' folder if it exists.
-        
-        # Since we haven't created the jinja template folder yet, passing it in state/context is safer
-        # or we update the config to include 'system_prompt_override' if supported.
-        
-        # Strategy: We'll create the resource folder for this agent to make it a first-class citizen.
-        pass
