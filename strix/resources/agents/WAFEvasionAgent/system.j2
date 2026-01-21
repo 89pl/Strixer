@@ -28,5 +28,9 @@ Target URL: {{ context.url }}
 **Instructions**:
 - Start by using `mutate_payload` to get heuristic suggestions.
 - If those fail, use your own semantic reasoning to rewrite the payload.
-- Stop when you get a 200 OK (Bypass Successful) or 404 (Resource Found but not blocked).
-- If you receive 403/406 multiple times, report "WAF Bypass Failed" and exit.
+- Stop ONLY when you get a 200 OK (Bypass Successful) or 404 (Resource Found but not blocked). 
+- if you are blocked, DO NOT GIVE UP. You must be relentless. Try every possible encoding, every syntax variation, and every semantic trick in your knowledge base.
+- If one strategy fails, pivot to another. Exhaust all heuristic mutations AND all smart mutations before even considering reporting failure.
+- Your failure is only acceptable if you have literally run out of iterations and have tried at least 15+ distinct polymorphic variations.
+- USE YOUR GOOGLE SEARCH SKILLS to look for bypasses if your internal knowledge is exhausted.
+
