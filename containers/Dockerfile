@@ -34,7 +34,7 @@ RUN apt-get update && \
     less man-db procps htop \
     iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
-    sqlmap nuclei subfinder naabu ffuf \
+    sqlmap nuclei subfinder naabu ffuf whatweb theharvester feroxbuster python3-requests \
     nodejs npm pipx \
     libcap2-bin \
     gdb \
@@ -141,6 +141,27 @@ ENV PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm
 ENV VIRTUAL_ENV="/app/venv"
 ENV POETRY_HOME="/opt/poetry"
 
+
+# Install Kiterunner (kr)
+RUN curl -sL https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz | tar xz -C /usr/local/bin kr
+
+# Install GraphQL Tools
+USER pentester
+RUN pipx install clairvoyance && \
+    curl -sSL https://github.com/dolevf/graphw00f/archive/refs/heads/main.tar.gz -o /tmp/graphw00f.tar.gz && \
+    mkdir -p /home/pentester/tools/graphw00f && \
+    tar -xzf /tmp/graphw00f.tar.gz -C /home/pentester/tools/graphw00f --strip-components=1 && \
+    rm /tmp/graphw00f.tar.gz
+
+USER root
+RUN echo '#!/bin/bash\npython3 /home/pentester/tools/graphw00f/main.py "$@"' > /usr/local/bin/graphw00f && \
+    chmod +x /usr/local/bin/graphw00f
+
+# Download Basic Wordlists
+RUN mkdir -p /home/pentester/wordlists && \
+    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-medium-files.txt -o /home/pentester/wordlists/raft-medium-files.txt && \
+    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt -o /home/pentester/wordlists/common.txt
+
 WORKDIR /app
 
 RUN ARCH=$(uname -m) && \
@@ -182,6 +203,9 @@ COPY strix/utils/ /app/strix/utils/
 COPY strix/telemetry/ /app/strix/telemetry/
 COPY strix/runtime/tool_server.py strix/runtime/__init__.py strix/runtime/runtime.py /app/strix/runtime/
 
+COPY strix/llm/ /app/strix/llm/
+COPY strix/agents/ /app/strix/agents/
+COPY strix/resources/ /app/strix/resources/
 COPY strix/tools/ /app/strix/tools/
 
 RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.bashrc && \
