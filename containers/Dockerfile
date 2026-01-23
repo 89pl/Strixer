@@ -148,7 +148,7 @@ RUN curl -sL https://github.com/assetnote/kiterunner/releases/download/v1.0.2/ki
 # Install GraphQL Tools
 USER pentester
 RUN pipx install clairvoyance && \
-    curl -sSL https://github.com/doyensec/graphw00f/archive/refs/heads/main.tar.gz -o /tmp/graphw00f.tar.gz && \
+    curl -sSL https://github.com/dolevf/graphw00f/archive/refs/heads/main.tar.gz -o /tmp/graphw00f.tar.gz && \
     mkdir -p /home/pentester/tools/graphw00f && \
     tar -xzf /tmp/graphw00f.tar.gz -C /home/pentester/tools/graphw00f --strip-components=1 && \
     pipx install /home/pentester/tools/graphw00f && \
