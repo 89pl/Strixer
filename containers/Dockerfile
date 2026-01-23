@@ -146,9 +146,15 @@ ENV POETRY_HOME="/opt/poetry"
 RUN curl -sL https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz | tar xz -C /usr/local/bin kr
 
 # Install GraphQL Tools
+USER pentester
 RUN pipx install clairvoyance && \
-    pipx install graphw00f && \
-    pipx ensurepath
+    curl -sSL https://github.com/doyensec/graphw00f/archive/refs/heads/main.tar.gz -o /tmp/graphw00f.tar.gz && \
+    mkdir -p /home/pentester/tools/graphw00f && \
+    tar -xzf /tmp/graphw00f.tar.gz -C /home/pentester/tools/graphw00f --strip-components=1 && \
+    pipx install /home/pentester/tools/graphw00f && \
+    rm /tmp/graphw00f.tar.gz
+
+USER root
 
 # Download Basic Wordlists
 RUN mkdir -p /home/pentester/wordlists && \
