@@ -147,8 +147,8 @@ RUN curl -sL https://github.com/assetnote/kiterunner/releases/download/v1.0.2/ki
 
 # Install GraphQL Tools
 RUN pipx install clairvoyance && \
-    git clone https://github.com/doyensec/graphw00f.git /home/pentester/tools/graphw00f && \
-    pipx install /home/pentester/tools/graphw00f
+    pipx install graphw00f && \
+    pipx ensurepath
 
 # Download Basic Wordlists
 RUN mkdir -p /home/pentester/wordlists && \
