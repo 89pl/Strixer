@@ -20,6 +20,7 @@ from strix.runtime import SandboxInitializationError
 from strix.tools import process_tool_invocations
 from strix.utils.resource_paths import get_strix_resource_path
 from strix.utils.time_keeper import TimeKeeper
+from strix.utils.arsenal import discover_arsenal
 
 from .state import AgentState
 
@@ -368,6 +369,14 @@ class BaseAgent(metaclass=AgentMeta):
                             self.state.add_message("system", f"Retrieved Context: {json.dumps(context)}")
                 except Exception as e:
                     logger.warning(f"Passive startup failed: {e}")
+
+        # Arsenal Intelligence: Notify agent of all capabilities
+        if self.state.parent_id is None:
+            try:
+                arsenal_report = discover_arsenal()
+                self.state.add_message("system", arsenal_report)
+            except Exception as e:
+                logger.warning(f"Arsenal discovery failed: {e}")
 
         self.state.add_message("user", task)
 
