@@ -34,7 +34,7 @@ RUN apt-get update && \
     less man-db procps htop \
     iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
-    sqlmap nuclei subfinder naabu ffuf whatweb theharvester \
+    sqlmap nuclei subfinder naabu ffuf whatweb theharvester feroxbuster \
     nodejs npm pipx \
     libcap2-bin \
     gdb \
@@ -141,9 +141,6 @@ ENV PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm
 ENV VIRTUAL_ENV="/app/venv"
 ENV POETRY_HOME="/opt/poetry"
 
-# Install Feroxbuster
-RUN curl -sL https://github.com/epi052/feroxbuster/releases/latest/download/feroxbuster_amd64.zip.gz | gunzip -c > /usr/local/bin/feroxbuster && \
-    chmod +x /usr/local/bin/feroxbuster
 
 # Install Kiterunner (kr)
 RUN curl -sL https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz | tar xz -C /usr/local/bin kr
