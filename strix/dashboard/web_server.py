@@ -25,7 +25,9 @@ from strix.dashboard.state import (
     add_live_feed_entry,
     init_state,
     load_state_from_file,
+    DashboardState,
 )
+from dataclasses import asdict
 
 
 # Server configuration
@@ -50,23 +52,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         
+        # Reload state from file to get latest updates from agent process
+        load_state_from_file()
+        state = get_state()
+        
         # API endpoints
         if path == "/api/state":
-            self._send_json(get_state().to_dict())
+            self._send_json(state.to_dict())
         elif path == "/api/health":
             self._send_json({"status": "ok", "timestamp": time.time()})
         elif path == "/api/vulnerabilities":
-            self._send_json([v.__dict__ for v in get_state().vulnerabilities])
+            self._send_json([asdict(v) for v in state.vulnerabilities])
         elif path == "/api/agents":
-            self._send_json([a.__dict__ for a in get_state().agents])
+            self._send_json([asdict(a) for a in state.agents])
         elif path == "/api/tools":
-            self._send_json([t.__dict__ for t in get_state().tool_executions])
+            self._send_json([asdict(t) for t in state.tool_executions])
         elif path == "/api/stats":
-            self._send_json(get_state().stats.__dict__)
+            self._send_json(asdict(state.stats))
         elif path == "/api/agent-tree":
-            self._send_json(get_state().get_agent_tree() or {})
+            self._send_json(state.get_agent_tree() or {})
         elif path == "/api/feed":
-            self._send_json(get_state().live_feed)
+            self._send_json(state.live_feed)
         elif path == "/health":
             self._send_json({"status": "ok"})
         else:

@@ -270,8 +270,13 @@ def load_state_from_file() -> None:
     try:
         if Path(_state_file).exists():
             with open(_state_file, "r") as f:
-                data = json.load(f)
-                _state = DashboardState.from_dict(data)
+                content = f.read().strip()
+                if content and content != "{}":
+                    data = json.loads(content)
+                    if data:  # Only update if we have actual data
+                        _state = DashboardState.from_dict(data)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing state file JSON: {e}")
     except Exception as e:
         print(f"Error loading state file: {e}")
 
@@ -280,13 +285,49 @@ def load_state_from_file() -> None:
 def init_state(scan_config: dict[str, Any] | None = None) -> None:
     """Initialize state with scan configuration."""
     global _state
-    _state = DashboardState()
     
+    # First try to load existing state
+    load_state_from_file()
+    
+    # If scan config provided, update it
     if scan_config:
-        _state.scan_config = ScanConfig(**scan_config)
+        # Filter out None values and only use valid keys for ScanConfig
+        valid_keys = {'target', 'timeframe', 'scan_mode', 'model', 'prompt'}
+        filtered_config = {k: v for k, v in scan_config.items() if k in valid_keys and v is not None}
+        
+        # Set defaults for missing values
+        if 'target' not in filtered_config:
+            filtered_config['target'] = ''
+        if 'timeframe' not in filtered_config:
+            filtered_config['timeframe'] = 60
+        if 'scan_mode' not in filtered_config:
+            filtered_config['scan_mode'] = 'deep'
+        if 'model' not in filtered_config:
+            filtered_config['model'] = 'qwen3-coder-plus'
+        if 'prompt' not in filtered_config:
+            filtered_config['prompt'] = ''
+            
+        _state.scan_config = ScanConfig(**filtered_config)
     
+    # Set time info
     _state.time.start_time = datetime.now(timezone.utc).isoformat()
     _state.time.duration_minutes = _state.scan_config.timeframe
-    _state.time.remaining_minutes = _state.scan_config.timeframe
+    _state.time.remaining_minutes = float(_state.scan_config.timeframe)
+    _state.time.progress_percentage = 0.0
+    _state.time.phase = "starting"
+    _state.time.elapsed_minutes = 0.0
+    
+    # Initialize stats with proper defaults
+    _state.stats.active_agents = 1
+    
+    # Add initial live feed entry to show dashboard is working
+    if not _state.live_feed:
+        _state.live_feed.append({
+            "id": "F-1",
+            "type": "system",
+            "message": "Dashboard initialized - waiting for scan activity...",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "severity": "info"
+        })
     
     _write_state_file()

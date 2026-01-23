@@ -341,6 +341,9 @@ class Tracer:
                         output=result_str[:200],
                         severity=severity
                     )
+                    
+                    # Also sync stats after tool execution
+                    self._sync_stats_to_dashboard()
                 except Exception as e:
                     logger.debug(f"Failed to update dashboard tool execution: {e}")
 
@@ -355,6 +358,7 @@ class Tracer:
             
             # Update dashboard state
             self._sync_agents_to_dashboard()
+            self._sync_stats_to_dashboard()
             
             # Add to live feed for status changes
             if _is_dashboard_enabled():

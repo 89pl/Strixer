@@ -72,7 +72,11 @@ const App: React.FC = () => {
       }
 
       // Also try to build tree from agents array in state if no tree from API
-      if (!agentTree && state.agents && state.agents.length > 0) {
+      // Check treeData instead of agentTree to avoid stale closure issue
+      const hasValidTree = treeData && typeof treeData === 'object' && 
+        (treeData.id || Array.isArray(treeData) || Object.keys(treeData).length > 0);
+      
+      if (!hasValidTree && state.agents && state.agents.length > 0) {
         const builtTree = buildAgentTree(state.agents);
         if (builtTree) {
           setAgentTree(builtTree);
@@ -141,7 +145,7 @@ const App: React.FC = () => {
       setConnected(false);
       setLastError(error instanceof Error ? error.message : 'Connection failed');
     }
-  }, [agentTree]);
+  }, []); // Remove agentTree dependency to fix stale closure issue
 
   // Poll for state updates
   useEffect(() => {
