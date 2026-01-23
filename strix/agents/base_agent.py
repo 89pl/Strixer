@@ -1,4 +1,5 @@
 import asyncio
+import json
 import contextlib
 import logging
 from typing import TYPE_CHECKING, Any, Optional
@@ -18,6 +19,7 @@ from strix.llm.utils import clean_content
 from strix.runtime import SandboxInitializationError
 from strix.tools import process_tool_invocations
 from strix.utils.resource_paths import get_strix_resource_path
+from strix.utils.time_keeper import TimeKeeper
 
 from .state import AgentState
 
@@ -75,6 +77,7 @@ class BaseAgent(metaclass=AgentMeta):
             )
 
         self.llm = LLM(self.llm_config, agent_name=self.agent_name)
+        self.time_keeper = TimeKeeper()
 
         with contextlib.suppress(Exception):
             self.llm.set_agent_identity(self.state.agent_name, self.state.agent_id)
@@ -342,9 +345,42 @@ class BaseAgent(metaclass=AgentMeta):
         if not self.state.task:
             self.state.task = task
 
+        # Passive Startup: Check StrixDB for target history
+        if self.state.parent_id is None: # Only root agent does this
+            target = os.getenv("SCAN_TARGET", "")
+            if target:
+                try:
+                    from strix.tools.strixdb import strixdb_actions
+                    from strix.tools.knowledge_graph.graph_engine import GraphEngine
+                    
+                    # Search for existing knowledge
+                    res = strixdb_actions.strixdb_search(agent_state=None, query=target, category="metadata")
+                    if res.get("success") and res.get("results"):
+                        # Found existing target data
+                        msg = f"PASSIVE STARTUP: Found historical data for target '{target}' in StrixDB. "
+                        msg += "Retrieving Knowledge Graph context..."
+                        self.state.add_message("system", msg)
+                        
+                        # Load graph context
+                        engine = GraphEngine.load_from_strixdb(strixdb_actions, target_scope=target)
+                        context = engine.get_context(target)
+                        if "error" not in context:
+                            self.state.add_message("system", f"Retrieved Context: {json.dumps(context)}")
+                except Exception as e:
+                    logger.warning(f"Passive startup failed: {e}")
+
         self.state.add_message("user", task)
 
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
+        # Timeframe Awareness & Pacing
+        if self.time_keeper.is_time_up():
+            self.state.add_message("system", "URGENT: Timeframe has been exhausted. Please wrap up and call finish_scan immediately.")
+        else:
+            pacing_delay = self.time_keeper.calculate_pacing_delay(self.state.iteration)
+            if pacing_delay > 5: # Only delay if it's significant
+                logger.debug(f"Pacing scan: Sleeping for {pacing_delay:.2f}s")
+                await asyncio.sleep(pacing_delay)
+
         final_response = None
 
         response = await self.llm.generate(self.state.get_conversation_history())
