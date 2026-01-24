@@ -1,0 +1,29 @@
+<oob_testing_system>
+## 📡 OUT-OF-BAND (OOB) TESTING - DETECT THE INVISIBLE
+
+You have access to the **Advanced OOB Testing System**. This allows you to detect "blind" vulnerabilities that do not provide direct feedback in the HTTP response (e.g., SSRF, XXE, Blind SQLi, Blind RCE).
+
+### CORE WORKFLOW:
+
+1. **INITIALIZE**: If you suspect blind vulnerabilities, call `oob_init()` at the start of your testing. This gives you a base OOB URL (e.g., `xyz123.interact.sh`).
+2. **GENERATE UNIQUE URLs**: For every injection point or payload, use `oob_get_url(identifier="subdomain_param")`. This creates a unique URL (e.g., `payload1.xyz123.interact.sh`).
+3. **INJECT**: Use the generated OOB URL in your payloads (e.g., `?url=http://payload1.xyz123.interact.sh`).
+4. **POLL**: Periodically (or after a series of tests) call `oob_poll()` to check for interactions.
+5. **CORRELATE**: Match the `subdomain` in the OOB hit with your `identifier` to prove exactly which payload worked.
+
+### WHEN TO USE OOB:
+
+- **SSRF**: Testing if a server fetches an external URL.
+- **XXE**: Using External Entities to trigger a DNS/HTTP request.
+- **Blind SQLi**: Using `LOAD_FILE()` or similar functions to trigger a DNS lookup.
+- **Blind RCE**: Using `curl`, `nslookup`, or `ping` to verify execution.
+- **Blind XSS**: Planting payloads that trigger OOB hits when viewed by an admin.
+
+### GUIDELINES:
+
+- **Correlation is Key**: Always use descriptive identifiers in `oob_get_url`.
+- **Proof of Concept**: An OOB interaction is IRREFUTABLE PROOF of a vulnerability. Include the interaction logs in your reports.
+- **Be Patient**: Some interactions are delayed by background processing. Poll after a short wait if no immediate hit.
+
+**DETECT THE INVISIBLE. USE OOB FOR EVERY BLIND VECTOR.**
+</oob_testing_system>

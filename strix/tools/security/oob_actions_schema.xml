@@ -1,0 +1,33 @@
+<tools>
+  <tool name="oob_init">
+    <description>
+      Initializes a permanent Out-of-Band (OOB) testing environment for the current scan.
+      Returns a base OOB URL. Call this ONCE at the start of a scan if you plan to test for blind vulnerabilities.
+    </description>
+    <parameters>
+      <!-- No parameters required, uses agent state -->
+    </parameters>
+  </tool>
+
+  <tool name="oob_get_url">
+    <description>
+      Generates a unique, trackable OOB URL for a specific payload.
+      The 'identifier' will appear in the OOB logs, allowing you to correlate hits with specific injection points.
+    </description>
+    <parameters>
+      <parameter name="identifier" type="string" required="false">
+        <description>A short label for the payload (e.g., 'ssrf_param_id', 'xxe_entity').</description>
+      </parameter>
+    </parameters>
+  </tool>
+
+  <tool name="oob_poll">
+    <description>
+      Checks the OOB server for any DNS or HTTP interactions triggered by your payloads.
+      Returns details of the interaction (Source IP, Time, Type, Path/Subdomain).
+    </description>
+    <parameters>
+      <!-- No parameters required, uses agent state tokens -->
+    </parameters>
+  </tool>
+</tools>
