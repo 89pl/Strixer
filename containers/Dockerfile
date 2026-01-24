@@ -150,8 +150,8 @@ RUN ARCH=$(uname -m) && \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    curl -sSfL "https://github.com/ph4ntonn/Stowaway/releases/download/2.2/stowaway_admin_${STOWAWAY_ARCH}" -o /usr/local/bin/stowaway_admin && \
-    curl -sSfL "https://github.com/ph4ntonn/Stowaway/releases/download/2.2/stowaway_agent_${STOWAWAY_ARCH}" -o /usr/local/bin/stowaway_agent && \
+    curl -sSfL "https://github.com/ph4ntonn/Stowaway/releases/download/v2.2/${STOWAWAY_ARCH}_admin" -o /usr/local/bin/stowaway_admin && \
+    curl -sSfL "https://github.com/ph4ntonn/Stowaway/releases/download/v2.2/${STOWAWAY_ARCH}_agent" -o /usr/local/bin/stowaway_agent && \
     chmod +x /usr/local/bin/stowaway_admin /usr/local/bin/stowaway_agent
 
 USER pentester
