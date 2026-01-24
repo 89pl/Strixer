@@ -1,14 +1,36 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <tools>
+  <description>
+    StrixDB Tools - Permanent GitHub-based Knowledge Repository
+    
+    These tools allow you to store and retrieve useful artifacts in StrixDB,
+    a permanent GitHub repository. Act as an ENTHUSIASTIC COLLECTOR - save
+    scripts, exploits, knowledge, tools, methods, and anything else useful
+    for future security testing engagements. BUILD YOUR ARSENAL!
+    
+    Default Categories:
+    - scripts: Automation scripts, shell scripts, utilities
+    - exploits: Working exploits and PoCs
+    - knowledge: Security knowledge, research notes, documentation
+    - methods: Attack methodologies and techniques
+    - tools: Custom security tools
+    - configs: Configuration files and templates
+    - wordlists: Custom wordlists for fuzzing
+    - payloads: Useful payloads for attacks
+    - templates: Report and code templates
+    - notes: Quick notes and findings
+    
+    You can create custom categories using strixdb_create_category()!
+  </description>
+
   <tool>
     <name>strixdb_create_category</name>
-    <description>Create a new category in StrixDB for organizing artifacts.</description>
+    <description>Create a new category in StrixDB for organizing artifacts. Use this when existing categories don't fit your content.</description>
     <parameters>
       <parameter>
         <name>category_name</name>
         <type>string</type>
         <required>true</required>
-        <description>Name of the new category (lowercase, no spaces)</description>
+        <description>Name for the new category (lowercase, no spaces, underscores OK)</description>
       </parameter>
       <parameter>
         <name>description</name>
@@ -21,7 +43,7 @@
 
   <tool>
     <name>strixdb_save</name>
-    <description>Save an item to StrixDB. Use this to permanently store useful artifacts like scripts, exploits, knowledge, tools, and other items for future reference.</description>
+    <description>Save an item to StrixDB for permanent storage. Be an ENTHUSIASTIC COLLECTOR! If something might be useful later, save it. Note: If the category doesn't exist, it will be created automatically!</description>
     <parameters>
       <parameter>
         <name>category</name>
