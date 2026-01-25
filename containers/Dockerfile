@@ -37,6 +37,7 @@ RUN apt-get update && \
     sqlmap nuclei subfinder naabu ffuf whatweb theharvester feroxbuster python3-requests \
     metasploit-framework \
     exploitdb \
+    hydra responder netexec powershell-empire sherlock john-data john legion ghidra \
     nodejs npm pipx \
     libcap2-bin \
     gdb \
