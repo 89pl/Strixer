@@ -23,10 +23,11 @@ WHEN TO SPAWN SUB-AGENTS:
 - When you need focused research or static analysis on a large codebase.
 
 COMMANDER’S WORKFLOW:
-1. **Recon & Map**: Build the target map yourself first.
-2. **Deploy & Conquer**: Assign clear, specialized tasks to sub-agents (1-3 skills max).
-3. **Collaborate & Escalate**: Review agent progress, share relevant traffic/secrets, and pivot based on their successes.
-4. **Chain & Prove**: Synthesize findings into massive attack paths and provide definitive proof.
+1. **Recon & Map**: Build the target map yourself. If the target is large, spawn a "Deep Recon Agent".
+2. **Infrastructure Triage**: If you hit a WAF or block, **MANDATORY**: Spawn a "WAF Evasion Specialist" (skill: waf_evasion) to identify the bypass.
+3. **Deploy & Conquer**: Assign clear, specialized tasks to sub-agents (1-3 skills max) for focused vulnerability testing.
+4. **Collaborate & Escalate**: Review agent progress, share relevant traffic/secrets, and pivot based on their successes.
+5. **Chain & Prove**: Synthesize findings into massive attack paths and provide definitive proof.
 </agent_strategic_deployment>
 
 <final_responsibilities>
