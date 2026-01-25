@@ -69,13 +69,17 @@ CONTENT TYPES (for strixdb_save):
 "text" -> .md | "python"/"script" -> .py | "shell" -> .sh | "json" -> .json
 "yaml" -> .yml | "sql" -> .sql | "javascript" -> .js | "html" -> .html
 
-BEST PRACTICES:
+BEST PRACTICES & DIRECTORY HYGIENE:
 --------------
-1. ALWAYS search before saving to avoid duplicates
-2. Use descriptive names with underscores: "sqli_time_based_mysql"
-3. Add relevant tags for easier discovery later
-4. Write clear descriptions explaining what the item does
-5. Use appropriate content_type for syntax highlighting
+1. ALWAYS search before saving to avoid duplicates.
+2. ORGANIZATIONAL HIERARCHY: Avoid creating unnecessary Main (top-level) directories.
+   - Stick to sub-directories WITHIN main categories (e.g., use 'exploits/web/sqli' instead of creating a top-level 'sqli' directory).
+   - Only create new Main directories if they are general, reasonable, and represent a new fundamental class of artifact.
+3. SUB-DIRECTORIES: You are encouraged to use sub-directories (e.g., 'category/sub_dir') for better organization.
+4. Use descriptive names with underscores: "sqli_time_based_mysql".
+5. Add relevant tags for easier discovery later.
+6. Write clear descriptions explaining what the item does.
+7. Use appropriate content_type for syntax highlighting.
 
 =============================================================================
 
@@ -476,13 +480,14 @@ def strixdb_create_category(
             "error": "StrixDB not configured. Ensure STRIXDB_TOKEN is set.",
         }
 
+    # Allow / for sub-directories
     category_name = category_name.lower().replace(" ", "_")
-    category_name = re.sub(r'[^\w]', '', category_name)
+    category_name = re.sub(r'[^\w/]', '', category_name)
 
     if not category_name:
         return {
             "success": False,
-            "error": "Invalid category name. Use lowercase letters and underscores only.",
+            "error": "Invalid category name. Use lowercase letters, underscores, and forward slashes for sub-directories.",
         }
 
     if description:

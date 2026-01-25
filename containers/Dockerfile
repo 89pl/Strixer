@@ -36,6 +36,7 @@ RUN apt-get update && \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf whatweb theharvester feroxbuster python3-requests \
     metasploit-framework \
+    exploitdb \
     nodejs npm pipx \
     libcap2-bin \
     gdb \

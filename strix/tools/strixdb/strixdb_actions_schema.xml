@@ -2,12 +2,15 @@
   <description>
     StrixDB Tools - Permanent GitHub-based Knowledge Repository
     
-    These tools allow you to store and retrieve useful artifacts in StrixDB,
-    a permanent GitHub repository. Act as an ENTHUSIASTIC COLLECTOR - save
-    scripts, exploits, knowledge, tools, methods, and anything else useful
-    for future security testing engagements. BUILD YOUR ARSENAL!
+    These tools allow you to store and retrieve useful artifacts in StrixDB.
     
-    Default Categories:
+    DIRECTORY HYGIENE GUIDELINES:
+    - Avoid creating unnecessary "Main" (top-level) directories.
+    - Stick to sub-directories WITHIN existing main categories (e.g., use 'exploits/web/sqli' instead of creating a top-level 'sqli' directory).
+    - "Main" directories should be general and reasonable.
+    - Build your arsenal by organizing content into logical hierarchies!
+    
+    Default Main Categories:
     - scripts: Automation scripts, shell scripts, utilities
     - exploits: Working exploits and PoCs
     - knowledge: Security knowledge, research notes, documentation
@@ -19,18 +22,18 @@
     - templates: Report and code templates
     - notes: Quick notes and findings
     
-    You can create custom categories using strixdb_create_category()!
+    You can create custom categories or sub-directories using strixdb_create_category()!
   </description>
 
   <tool>
     <name>strixdb_create_category</name>
-    <description>Create a new category in StrixDB for organizing artifacts. Use this when existing categories don't fit your content.</description>
+    <description>Create a new category or sub-directory in StrixDB. PREFER creating sub-directories within existing main categories (e.g., 'exploits/web').</description>
     <parameters>
       <parameter>
         <name>category_name</name>
         <type>string</type>
         <required>true</required>
-        <description>Name for the new category (lowercase, no spaces, underscores OK)</description>
+        <description>Name for the new category (lowercase, no spaces, underscores/slashes OK for sub-dirs)</description>
       </parameter>
       <parameter>
         <name>description</name>
