@@ -38,6 +38,7 @@ RUN apt-get update && \
     metasploit-framework \
     exploitdb \
     hydra responder netexec powershell-empire sherlock john-data john legion ghidra \
+    mimikatz medusa powersploit bulk-extractor stegosuite steghide commix wordlists tcpdump 7zip radare2 \
     nodejs npm pipx \
     libcap2-bin \
     gdb \
