@@ -30,6 +30,11 @@ class AgentState(BaseModel):
 
     messages: list[dict[str, Any]] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
+    
+    # OOB Session Data
+    oob_session_id: str | None = None
+    oob_correlation_id: str | None = None
+    oob_secret_key: str | None = None
 
     start_time: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     last_updated: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

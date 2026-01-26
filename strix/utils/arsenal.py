@@ -9,10 +9,25 @@ def discover_arsenal() -> str:
     """
     # 1. Essential Security Binaries
     tools = [
+        # Network & Scanning
         "nmap", "nuclei", "sqlmap", "ffuf", "subfinder", "naabu", 
-        "whatweb", "theHarvester", "feroxbuster", "kr", 
-        "gitleaks", "trivy", "zap-cli", "wapiti", "nikto",
-        "gh", "git", "python3", "node", "go", "rustc"
+        "whatweb", "theHarvester", "feroxbuster", "kr", "tcpdump",
+        
+        # Identity & Credential Cracking
+        "hydra", "medusa", "john", "hashcat", "mimikatz", "responder", "netexec",
+        
+        # Exploitation & Post-Exploitation
+        "msfconsole", "searchsploit", "powershell-empire", "powersploit", "commix",
+        
+        # Reverse Engineering & Forensics
+        "ghidra", "r2", "gdb", "bulk-extractor", "stegosuite", "steghide",
+        
+        # Analysis & OSINT
+        "sherlock", "retire", "semgrep", "bandit", "trufflehog", "gitleaks",
+        
+        # System & Utilities
+        "trivy", "zap-cli", "wapiti", "nikto", "gh", "git", "7z", "jq",
+        "python3", "node", "go", "rustc"
     ]
     
     available_tools = []
