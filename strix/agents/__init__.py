@@ -2,6 +2,7 @@ from .base_agent import BaseAgent
 from .state import AgentState
 from .StrixAgent import StrixAgent
 from .StrixDBAgent import StrixDBAgent
+from .ExploitAgent import ExploitAgent
 
 
 __all__ = [
@@ -9,4 +10,5 @@ __all__ = [
     "BaseAgent",
     "StrixAgent",
     "StrixDBAgent",
+    "ExploitAgent",
 ]
